@@ -27,21 +27,22 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
     }
 
     // Parse the patch to get hunks
-    let hunks: Patch.Hunk[]
+    let parsedHunks: Patch.Hunk[]
     try {
-      const parseResult = Patch.parsePatch(params.patchText)
-      hunks = parseResult.hunks
+      parsedHunks = Patch.parsePatch(params.patchText).hunks
     } catch (error) {
       throw new Error(`apply_patch verification failed: ${error}`)
     }
 
-    if (hunks.length === 0) {
+    if (parsedHunks.length === 0) {
       const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
       if (normalized === "*** Begin Patch\n*** End Patch") {
         throw new Error("patch rejected: empty patch")
       }
       throw new Error("apply_patch verification failed: no hunks found")
     }
+
+    const hunks = Patch.normalizeHunks(parsedHunks, Instance.directory)
 
     // Validate file paths and check permissions
     const fileChanges: Array<{
@@ -125,6 +126,38 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
             newContent,
             type: hunk.move_path ? "move" : "update",
             movePath,
+            diff,
+            additions,
+            deletions,
+          })
+
+          totalDiff += diff + "\n"
+          break
+        }
+
+        case "replace": {
+          const stats = await fs.stat(filePath).catch(() => null)
+          if (!stats || stats.isDirectory()) {
+            throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`)
+          }
+
+          const oldContent = await fs.readFile(filePath, "utf-8")
+          const newContent =
+            hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
+          const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
+
+          let additions = 0
+          let deletions = 0
+          for (const change of diffLines(oldContent, newContent)) {
+            if (change.added) additions += change.count || 0
+            if (change.removed) deletions += change.count || 0
+          }
+
+          fileChanges.push({
+            filePath,
+            oldContent,
+            newContent,
+            type: "update",
             diff,
             additions,
             deletions,

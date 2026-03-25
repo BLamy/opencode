@@ -7,6 +7,19 @@ import * as vfs from "./shims/fs.browser"
 // Use jsonSchema instead of Zod to avoid Zod v4 incompatibility with Anthropic API
 // (Zod v4 omits `type: "object"` which the API requires)
 
+function countOccurrences(content: string, needle: string): number {
+  if (!needle) return 0
+
+  let count = 0
+  let index = 0
+  while (true) {
+    const next = content.indexOf(needle, index)
+    if (next === -1) return count
+    count++
+    index = next + needle.length
+  }
+}
+
 export const readFileTool = tool({
   description: "Read the contents of a file from the virtual filesystem. Use this to understand existing code before making changes.",
   parameters: jsonSchema<{ filePath: string; offset?: number; limit?: number }>({
@@ -44,7 +57,7 @@ export const readFileTool = tool({
 })
 
 export const writeFileTool = tool({
-  description: "Create or overwrite a file in the virtual filesystem.",
+  description: "Create a new file or intentionally replace an entire file in the virtual filesystem. Prefer edit for changes to existing files.",
   parameters: jsonSchema<{ filePath: string; content: string }>({
     type: "object",
     properties: {
@@ -62,31 +75,38 @@ export const writeFileTool = tool({
 })
 
 export const editFileTool = tool({
-  description: "Edit a file by replacing a specific string with another. The old_string must match exactly (including whitespace/indentation). Read the file first to get the exact content.",
-  parameters: jsonSchema<{ filePath: string; oldString: string; newString: string }>({
+  description: "Edit an existing file by replacing exact text with new text. The old_string must match exactly, including whitespace and indentation. Set replaceAll only when every occurrence should change.",
+  parameters: jsonSchema<{ filePath: string; oldString: string; newString: string; replaceAll?: boolean }>({
     type: "object",
     properties: {
       filePath: { type: "string", description: "Absolute path to the file to edit" },
-      oldString: { type: "string", description: "The exact text to find and replace (must be unique in the file)" },
+      oldString: {
+        type: "string",
+        description: "The exact text to find and replace. Add more surrounding context if only one occurrence should change.",
+      },
       newString: { type: "string", description: "The replacement text" },
+      replaceAll: {
+        type: "boolean",
+        description: "Replace every occurrence of oldString. Leave false unless all matches should change.",
+      },
     },
     required: ["filePath", "oldString", "newString"],
   }),
-  execute: async ({ filePath, oldString, newString }) => {
+  execute: async ({ filePath, oldString, newString, replaceAll }) => {
     const resolvedPath = resolvePath(filePath)
     try {
       const content = await vfs.readFile(resolvedPath, "utf-8") as string
 
-      if (!content.includes(oldString)) {
+      const occurrences = countOccurrences(content, oldString)
+      if (occurrences === 0) {
         return `Error: Could not find the specified text in ${filePath}. Make sure the old_string matches exactly, including whitespace and indentation.`
       }
 
-      const occurrences = content.split(oldString).length - 1
-      if (occurrences > 1) {
-        return `Error: Found ${occurrences} occurrences of the specified text. The old_string must be unique. Add more surrounding context to make it unique.`
+      if (occurrences > 1 && !replaceAll) {
+        return `Error: Found ${occurrences} occurrences of the specified text in ${filePath}. Add more surrounding context or set replaceAll=true if every match should change.`
       }
 
-      const newContent = content.replace(oldString, newString)
+      const newContent = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString)
       await vfs.writeFile(resolvedPath, newContent)
 
       let diff = ""
@@ -97,7 +117,8 @@ export const editFileTool = tool({
         diff += `+ ${line}\n`
       }
 
-      return `File edited: ${filePath}\n\n${diff}`
+      const replacementSummary = replaceAll && occurrences > 1 ? `Applied ${occurrences} replacements.\n\n` : ""
+      return `File edited: ${filePath}\n\n${replacementSummary}${diff}`
     } catch (e: any) {
       if (e.code === "ENOENT") {
         return `Error: File not found: ${filePath}`

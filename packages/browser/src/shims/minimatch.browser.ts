@@ -1,14 +1,9 @@
 // Minimal minimatch shim for browser
-export function minimatch(filepath: string, pattern: string, _opts?: any): boolean {
-  let regex = pattern
-    .replace(/\./g, "\\.")
-    .replace(/\*\*/g, "{{GLOBSTAR}}")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]")
-    .replace(/{{GLOBSTAR}}/g, ".*")
+import { matchGlob } from "./glob-utils.browser"
 
+export function minimatch(filepath: string, pattern: string, opts?: any): boolean {
   try {
-    return new RegExp("^" + regex + "$").test(filepath)
+    return matchGlob(filepath, pattern, { dot: opts?.dot })
   } catch {
     return false
   }

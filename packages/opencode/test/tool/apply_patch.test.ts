@@ -127,6 +127,37 @@ describe("tool.apply_patch freeform", () => {
     })
   })
 
+  test("normalizes delete then add of the same path into one update", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx, calls } = makeCtx()
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        const target = path.join(fixture.path, "same.txt")
+        await fs.writeFile(target, "before\n", "utf-8")
+
+        const patchText =
+          "*** Begin Patch\n*** Delete File: same.txt\n*** Add File: same.txt\n+after\n*** End Patch"
+
+        const result = await execute({ patchText }, ctx)
+
+        expect(result.output).toContain("M same.txt")
+        expect(result.output).not.toContain("A same.txt")
+        expect(result.output).not.toContain("D same.txt")
+        expect(result.metadata.files).toHaveLength(1)
+        expect(result.metadata.files[0].type).toBe("update")
+        expect(result.metadata.files[0].relativePath).toBe("same.txt")
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].metadata.files).toHaveLength(1)
+        expect(calls[0].metadata.files[0].type).toBe("update")
+
+        expect(await fs.readFile(target, "utf-8")).toBe("after\n")
+      },
+    })
+  })
+
   test("permission metadata includes move file info", async () => {
     await using fixture = await tmpdir({ git: true })
     const { ctx, calls } = makeCtx()

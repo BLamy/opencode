@@ -133,6 +133,31 @@ PATCH`
     })
   })
 
+  describe("maybeParseApplyPatchVerified", () => {
+    test("should normalize delete then add of the same file into one update change", async () => {
+      const filePath = path.join(tempDir, "same.txt")
+      await fs.writeFile(filePath, "before\n", "utf-8")
+
+      const patchText = `*** Begin Patch
+*** Delete File: same.txt
+*** Add File: same.txt
++after
+*** End Patch`
+
+      const result = await Patch.maybeParseApplyPatchVerified(["apply_patch", patchText], tempDir)
+      expect(result.type).toBe(Patch.MaybeApplyPatchVerified.Body)
+      if (result.type === Patch.MaybeApplyPatchVerified.Body) {
+        expect(result.action.changes.size).toBe(1)
+        const change = result.action.changes.get(filePath)
+        expect(change).toBeDefined()
+        expect(change?.type).toBe("update")
+        if (change?.type === "update") {
+          expect(change.new_content).toBe("after")
+        }
+      }
+    })
+  })
+
   describe("applyPatch", () => {
     test("should add a new file", async () => {
       const patchText = `*** Begin Patch
@@ -215,6 +240,25 @@ PATCH`
 
       const newContent = await fs.readFile(newPath, "utf-8")
       expect(newContent).toBe("new content\n")
+    })
+
+    test("should treat delete then add of the same file as an update", async () => {
+      const filePath = path.join(tempDir, "same-file.txt")
+      await fs.writeFile(filePath, "before\n", "utf-8")
+
+      const patchText = `*** Begin Patch
+*** Delete File: ${filePath}
+*** Add File: ${filePath}
++after
+*** End Patch`
+
+      const result = await Patch.applyPatch(patchText)
+      expect(result.added).toHaveLength(0)
+      expect(result.deleted).toHaveLength(0)
+      expect(result.modified).toEqual([filePath])
+
+      const content = await fs.readFile(filePath, "utf-8")
+      expect(content).toBe("after")
     })
 
     test("should handle multiple operations in one patch", async () => {
