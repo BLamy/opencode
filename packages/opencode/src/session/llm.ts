@@ -28,6 +28,41 @@ export namespace LLM {
   const log = Log.create({ service: "llm" })
   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
+  function safeLanguageModelMetadata(
+    input: StreamInput,
+    language: { provider?: string; modelId?: string } | undefined,
+    l: ReturnType<typeof log.clone>,
+  ) {
+    let providerId = input.model.providerID
+    let modelId = input.model.api.id
+
+    try {
+      if (typeof language?.provider === "string" && language.provider.trim()) {
+        providerId = language.provider
+      }
+    } catch (error) {
+      l.warn("language model provider getter failed", {
+        error,
+        providerID: input.model.providerID,
+        modelID: input.model.api.id,
+      })
+    }
+
+    try {
+      if (typeof language?.modelId === "string" && language.modelId.trim()) {
+        modelId = language.modelId
+      }
+    } catch (error) {
+      l.warn("language model modelId getter failed", {
+        error,
+        providerID: input.model.providerID,
+        modelID: input.model.api.id,
+      })
+    }
+
+    return { providerId, modelId }
+  }
+
   export type StreamInput = {
     user: MessageV2.User
     sessionID: string
@@ -64,8 +99,12 @@ export namespace LLM {
       Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),
     ])
+    if (!language) {
+      throw new Error(`Language model unavailable for ${input.model.providerID}/${input.model.api.id}`)
+    }
     // TODO: move this to a proper hook
     const isOpenaiOauth = provider.id === "openai" && auth?.type === "oauth"
+    const wrappedLanguage = safeLanguageModelMetadata(input, language, l)
 
     const system: string[] = []
     system.push(
@@ -267,6 +306,8 @@ export namespace LLM {
       messages,
       model: wrapLanguageModel({
         model: language,
+        providerId: wrappedLanguage.providerId,
+        modelId: wrappedLanguage.modelId,
         middleware: [
           {
             async transformParams(args) {

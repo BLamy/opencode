@@ -77,9 +77,13 @@ function isWorkspacePath(path: string): boolean {
   return path === WORKSPACE_ROOT || path.startsWith(`${WORKSPACE_ROOT}/`)
 }
 
+function isBridgedPath(path: string): boolean {
+  return path === "/opencode" || path.startsWith("/opencode/")
+}
+
 function getWorkspaceBridge(path: string): BrowserWorkspaceBridge | null {
   if (!workspaceBridge) return null
-  return isWorkspacePath(path) ? workspaceBridge : null
+  return isWorkspacePath(path) || isBridgedPath(path) ? workspaceBridge : null
 }
 
 function createDirent(name: string, type: "file" | "directory"): BrowserWorkspaceDirent {

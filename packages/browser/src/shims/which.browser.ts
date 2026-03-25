@@ -1,3 +1,10 @@
+type WhichOptions = {
+  all?: boolean
+  nothrow?: boolean
+}
+
+type WhichResult = string | string[] | null
+
 // Browser-compatible 'which' shim
 function resolveCommand(cmd: string): string | null {
   switch (cmd) {
@@ -14,14 +21,29 @@ function resolveCommand(cmd: string): string | null {
   }
 }
 
-export default function which(cmd: string): Promise<string> {
+function resolveResult(cmd: string, options: WhichOptions = {}): WhichResult {
   const resolved = resolveCommand(cmd)
-  if (resolved) return Promise.resolve(resolved)
-  return Promise.reject(new Error(`which: ${cmd} not available in browser`))
-}
-export function sync(cmd: string): string {
-  const resolved = resolveCommand(cmd)
-  if (resolved) return resolved
+  if (resolved) {
+    return options.all ? [resolved] : resolved
+  }
+
+  if (options.nothrow) {
+    return options.all ? [] : null
+  }
+
   throw new Error(`which: ${cmd} not available in browser`)
 }
-which.sync = sync
+
+export function sync(cmd: string, options: WhichOptions = {}): WhichResult {
+  return resolveResult(cmd, options)
+}
+
+const which = Object.assign((cmd: string, options: WhichOptions = {}): Promise<WhichResult> => {
+  try {
+    return Promise.resolve(resolveResult(cmd, options))
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}, { sync })
+
+export default which
