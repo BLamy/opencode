@@ -17,10 +17,14 @@ async function loadMatter(): Promise<FrontmatterParser> {
       typeof globalThis.window === "undefined"
         ? import("gray-matter")
         : import("../../../browser/src/shims/gray-matter.browser.ts")
+<<<<<<< Updated upstream
     ).then((mod) => {
       const matter = mod.default
       return matter as unknown as FrontmatterParser
     })
+=======
+    ).then((mod) => mod.default as unknown as FrontmatterParser)
+>>>>>>> Stashed changes
   }
 
   return matterPromise
