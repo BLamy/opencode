@@ -53,6 +53,16 @@ export interface OpenCodeTuiSession {
   renderer: BrowserRenderer
   exited: Promise<void>
   dispose(): void
+  setThemeMode(mode: ThemeMode): void
+}
+
+function getTerminalTheme(mode: ThemeMode) {
+  return {
+    background: mode === "light" ? "#ffffff" : "#0d1117",
+    foreground: mode === "light" ? "#24292f" : "#c9d1d9",
+    cursor: mode === "light" ? "#0969da" : "#58a6ff",
+    selectionBackground: mode === "light" ? "#dbeafe" : "#264f78",
+  }
 }
 
 function createSyntheticBrowserKey(
@@ -123,6 +133,7 @@ class XtermBrowserHost implements BrowserTerminalHost {
   private readonly mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
   private readonly disposables: Array<{ dispose(): void }> = []
   private currentThemeMode: ThemeMode
+  private overrideThemeMode: ThemeMode | null
   private readonly focusInHandler: () => void
   private readonly focusOutHandler: (event: FocusEvent) => void
   private readonly keyDownHandler: (event: KeyboardEvent) => void
@@ -134,7 +145,8 @@ class XtermBrowserHost implements BrowserTerminalHost {
     private readonly surface: HTMLElement,
     private readonly env?: BrowserTuiEnvironment,
   ) {
-    this.currentThemeMode = env?.themeMode ?? (this.mediaQuery.matches ? "dark" : "light")
+    this.overrideThemeMode = env?.themeMode ?? null
+    this.currentThemeMode = this.resolveThemeMode()
 
     this.disposables.push(
       this.term.onData((data) => {
@@ -186,10 +198,11 @@ class XtermBrowserHost implements BrowserTerminalHost {
     }
 
     this.themeChangeHandler = (event: MediaQueryListEvent) => {
-      this.currentThemeMode = this.env?.themeMode ?? (event.matches ? "dark" : "light")
-      for (const handler of this.themeHandlers) {
-        handler(this.currentThemeMode)
+      if (this.overrideThemeMode) {
+        return
       }
+      this.currentThemeMode = event.matches ? "dark" : "light"
+      this.emitThemeModeChange()
     }
 
     this.surface.addEventListener("focusin", this.focusInHandler)
@@ -241,6 +254,12 @@ class XtermBrowserHost implements BrowserTerminalHost {
     return () => this.themeHandlers.delete(handler)
   }
 
+  public setThemeMode(mode: ThemeMode | null): void {
+    this.overrideThemeMode = mode
+    this.currentThemeMode = this.resolveThemeMode()
+    this.emitThemeModeChange()
+  }
+
   public copy(text: string): Promise<void> {
     if (this.env?.copy) {
       return Promise.resolve(this.env.copy(text)).then(() => {})
@@ -255,6 +274,16 @@ class XtermBrowserHost implements BrowserTerminalHost {
     this.env?.setTitle?.(title)
     if (!this.env?.setTitle) {
       document.title = title
+    }
+  }
+
+  private resolveThemeMode(): ThemeMode {
+    return this.overrideThemeMode ?? (this.mediaQuery.matches ? "dark" : "light")
+  }
+
+  private emitThemeModeChange(): void {
+    for (const handler of this.themeHandlers) {
+      handler(this.currentThemeMode)
     }
   }
 
@@ -353,12 +382,9 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
 
   await initBrowserDB()
   startAutoPersist()
-  await loadBrowserRenderLib(
-    options.wasmUrl
-      ? { wasmUrl: options.wasmUrl }
-      : {},
-  )
+  await loadBrowserRenderLib(options.wasmUrl ? { wasmUrl: options.wasmUrl } : {})
 
+  const initialThemeMode = options.env?.themeMode ?? "dark"
   const fitAddon = new FitAddon()
   const term = new Terminal({
     allowTransparency: true,
@@ -368,18 +394,21 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
     fontSize: 13,
     lineHeight: 1.18,
     scrollback: 3000,
-    theme: {
-      background: options.env?.themeMode === "light" ? "#ffffff" : "#0d1117",
-      foreground: options.env?.themeMode === "light" ? "#24292f" : "#c9d1d9",
-      cursor: options.env?.themeMode === "light" ? "#0969da" : "#58a6ff",
-      selectionBackground: options.env?.themeMode === "light" ? "#dbeafe" : "#264f78",
-    },
+    theme: getTerminalTheme(initialThemeMode),
   })
 
   term.loadAddon(fitAddon)
   term.open(options.container)
 
   const host = new XtermBrowserHost(term, fitAddon, options.container, options.env)
+  const applyThemeMode = (mode: ThemeMode) => {
+    term.options.theme = getTerminalTheme(mode)
+    options.container.dataset.almostnodeTheme = mode
+  }
+  host.onThemeModeChange((mode) => {
+    applyThemeMode(mode)
+  })
+  applyThemeMode(initialThemeMode)
   host.fit()
   term.focus()
 
@@ -436,6 +465,9 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
     host,
     exited,
     dispose,
+    setThemeMode(mode) {
+      host.setThemeMode(mode)
+    },
     debugSession,
   }
 
