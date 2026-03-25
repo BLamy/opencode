@@ -42,18 +42,11 @@ function parseFrontmatter<T extends FrontmatterData = FrontmatterData>(
   const file = toFile(input) as GrayMatterFile<T>
   const [open, close] = resolveDelimiters(options)
 
-  if (file.content === "") {
-    return file
-  }
-
-  if (!file.content.startsWith(open)) {
-    return file
-  }
+  if (file.content === "") return file
+  if (!file.content.startsWith(open)) return file
 
   const newlineMatch = /^\r?\n/.exec(file.content.slice(open.length))
-  if (!newlineMatch) {
-    return file
-  }
+  if (!newlineMatch) return file
 
   const frontmatterStart = open.length + newlineMatch[0].length
   const closeMarker = `\n${close}`
@@ -61,9 +54,7 @@ function parseFrontmatter<T extends FrontmatterData = FrontmatterData>(
   if (closeIndex === -1 && file.content.startsWith(`${open}\r\n`)) {
     closeIndex = file.content.indexOf(`\r\n${close}`, frontmatterStart)
   }
-  if (closeIndex === -1) {
-    return file
-  }
+  if (closeIndex === -1) return file
 
   const rawMatter = file.content.slice(frontmatterStart, closeIndex)
   file.matter = rawMatter
@@ -97,12 +88,15 @@ function stringifyFrontmatter(
     lineWidth: -1,
     noRefs: true,
   }).trimEnd()
+
   if (!frontmatter) {
     return file.content
   }
+
   if (!file.content) {
     return `${open}\n${frontmatter}\n${close}\n`
   }
+
   return `${open}\n${frontmatter}\n${close}\n${file.content}`
 }
 
