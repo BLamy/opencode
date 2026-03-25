@@ -30,4 +30,6 @@ Example patch:
 It is important to remember:
 
 - You must include a header with your intended action (Add/Delete/Update)
+- Use `*** Update File:` for edits to an existing file. Do not model an edit as deleting and re-adding the same path.
+- Same-path `Delete File` plus `Add File` is accepted as a compatibility fallback and may be normalized today, but it is not the preferred format and may be rejected in the future.
 - You must prefix new lines with `+` even when creating a new file

@@ -26,6 +26,10 @@ export namespace Patch {
     | { type: "delete"; path: string }
     | { type: "update"; path: string; move_path?: string; chunks: UpdateFileChunk[] }
 
+  export type NormalizedHunk =
+    | Hunk
+    | { type: "replace"; path: string; contents: string }
+
   export interface UpdateFileChunk {
     old_lines: string[]
     new_lines: string[]
@@ -243,6 +247,63 @@ export namespace Patch {
     }
 
     return { hunks }
+  }
+
+  export function normalizeHunks(hunks: Hunk[], cwd: string): NormalizedHunk[] {
+    type AddHunk = Extract<Hunk, { type: "add" }>
+    type DeleteHunk = Extract<Hunk, { type: "delete" }>
+
+    const entries = new Map<
+      string,
+      {
+        adds: Array<{ index: number; hunk: AddHunk }>
+        deletes: Array<{ index: number; hunk: DeleteHunk }>
+        others: number
+      }
+    >()
+
+    for (const [index, hunk] of hunks.entries()) {
+      const resolvedPath = path.resolve(cwd, hunk.path)
+      const entry = entries.get(resolvedPath) ?? { adds: [], deletes: [], others: 0 }
+      if (hunk.type === "add") {
+        entry.adds.push({ index, hunk })
+      } else if (hunk.type === "delete") {
+        entry.deletes.push({ index, hunk })
+      } else {
+        entry.others++
+      }
+      entries.set(resolvedPath, entry)
+    }
+
+    const replacements = new Map<number, NormalizedHunk>()
+    const skip = new Set<number>()
+
+    for (const entry of entries.values()) {
+      if (entry.adds.length !== 1 || entry.deletes.length !== 1 || entry.others !== 0) {
+        continue
+      }
+
+      const add = entry.adds[0]
+      const del = entry.deletes[0]
+
+      // Only normalize the delete-then-add compatibility shape.
+      if (del.index > add.index) {
+        continue
+      }
+
+      replacements.set(del.index, {
+        type: "replace",
+        path: del.hunk.path,
+        contents: add.hunk.contents,
+      })
+      skip.add(add.index)
+    }
+
+    return hunks.flatMap((hunk, index) => {
+      if (skip.has(index)) return []
+      const replacement = replacements.get(index)
+      return [replacement ?? hunk]
+    })
   }
 
   // Apply patch functionality
@@ -515,7 +576,7 @@ export namespace Patch {
   }
 
   // Apply hunks to filesystem
-  export async function applyHunksToFiles(hunks: Hunk[]): Promise<AffectedPaths> {
+  export async function applyHunksToFiles(hunks: NormalizedHunk[]): Promise<AffectedPaths> {
     if (hunks.length === 0) {
       throw new Error("No files were modified.")
     }
@@ -565,6 +626,13 @@ export namespace Patch {
             log.info(`Updated file: ${hunk.path}`)
           }
           break
+
+        case "replace":
+          await fs.readFile(hunk.path, "utf-8")
+          await fs.writeFile(hunk.path, hunk.contents, "utf-8")
+          modified.push(hunk.path)
+          log.info(`Updated file: ${hunk.path}`)
+          break
       }
     }
 
@@ -574,7 +642,7 @@ export namespace Patch {
   // Main patch application function
   export async function applyPatch(patchText: string): Promise<AffectedPaths> {
     const { hunks } = parsePatch(patchText)
-    return applyHunksToFiles(hunks)
+    return applyHunksToFiles(normalizeHunks(hunks, process.cwd()))
   }
 
   // Async version of maybeParseApplyPatchVerified
@@ -606,8 +674,9 @@ export namespace Patch {
         const { args } = result
         const effectiveCwd = args.workdir ? path.resolve(cwd, args.workdir) : cwd
         const changes = new Map<string, ApplyPatchFileChange>()
+        const normalizedHunks = normalizeHunks(args.hunks, effectiveCwd)
 
-        for (const hunk of args.hunks) {
+        for (const hunk of normalizedHunks) {
           const resolvedPath = path.resolve(
             effectiveCwd,
             hunk.type === "update" && hunk.move_path ? hunk.move_path : hunk.path,
@@ -647,6 +716,23 @@ export namespace Patch {
                   unified_diff: fileUpdate.unified_diff,
                   move_path: hunk.move_path ? path.resolve(effectiveCwd, hunk.move_path) : undefined,
                   new_content: fileUpdate.content,
+                })
+              } catch (error) {
+                return {
+                  type: MaybeApplyPatchVerified.CorrectnessError,
+                  error: error as Error,
+                }
+              }
+              break
+
+            case "replace":
+              const replacePath = path.resolve(effectiveCwd, hunk.path)
+              try {
+                const oldContent = await fs.readFile(replacePath, "utf-8")
+                changes.set(resolvedPath, {
+                  type: "update",
+                  unified_diff: generateUnifiedDiff(oldContent, hunk.contents),
+                  new_content: hunk.contents,
                 })
               } catch (error) {
                 return {
