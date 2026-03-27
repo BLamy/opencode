@@ -33,6 +33,12 @@ import { Effect, Layer, ServiceMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRunPromise } from "@/effect/run-service"
 
+const dynamicImport = new Function("specifier", "return import(specifier)") as <
+  TModule = Record<string, unknown>,
+>(
+  specifier: string,
+) => Promise<TModule>
+
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
@@ -91,7 +97,7 @@ export namespace ToolRegistry {
             if (matches.length) await Config.waitForDependencies()
             for (const match of matches) {
               const namespace = path.basename(match, path.extname(match))
-              const mod = await import(process.platform === "win32" ? match : pathToFileURL(match).href)
+              const mod = await dynamicImport(process.platform === "win32" ? match : pathToFileURL(match).href)
               for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
                 custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
               }

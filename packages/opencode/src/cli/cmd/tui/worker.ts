@@ -9,16 +9,8 @@ import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
 import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
 import { Flag } from "@/flag/flag"
+import { ensureGlobalInitialized } from "@/global"
 import { setTimeout as sleep } from "node:timers/promises"
-
-await Log.init({
-  print: process.argv.includes("--print-logs"),
-  dev: Installation.isLocal(),
-  level: (() => {
-    if (Installation.isLocal()) return "DEBUG"
-    return "INFO"
-  })(),
-})
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -95,10 +87,34 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
   })
 }
 
-startEventStream({ directory: process.cwd() })
+let workerInitialization: Promise<void> | undefined
+
+async function initializeWorker() {
+  await ensureGlobalInitialized()
+  await Log.init({
+    print: process.argv.includes("--print-logs"),
+    dev: Installation.isLocal(),
+    level: (() => {
+      if (Installation.isLocal()) return "DEBUG"
+      return "INFO"
+    })(),
+  })
+
+  startEventStream({ directory: process.cwd() })
+}
+
+function ensureWorkerInitialized() {
+  workerInitialization ||= initializeWorker()
+  return workerInitialization
+}
+
+void ensureWorkerInitialized().catch((error) => {
+  console.error("failed to initialize opencode worker", error)
+})
 
 export const rpc = {
   async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
+    await ensureWorkerInitialized()
     const headers = { ...input.headers }
     const auth = getAuthorizationHeader()
     if (auth && !headers["authorization"] && !headers["Authorization"]) {
@@ -118,11 +134,13 @@ export const rpc = {
     }
   },
   async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
+    await ensureWorkerInitialized()
     if (server) await server.stop(true)
     server = await Server.listen(input)
     return { url: server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
+    await ensureWorkerInitialized()
     await Instance.provide({
       directory: input.directory,
       init: InstanceBootstrap,
@@ -132,13 +150,16 @@ export const rpc = {
     })
   },
   async reload() {
+    await ensureWorkerInitialized()
     Config.global.reset()
     await Instance.disposeAll()
   },
   async setWorkspace(input: { workspaceID?: string }) {
+    await ensureWorkerInitialized()
     startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
   },
   async shutdown() {
+    await ensureWorkerInitialized()
     Log.Default.info("worker shutting down")
     if (eventStream.abort) eventStream.abort.abort()
     await Instance.disposeAll()

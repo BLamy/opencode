@@ -19,6 +19,12 @@ import { Global } from "../global"
 import path from "path"
 import { Filesystem } from "../util/filesystem"
 
+const dynamicImport = new Function("specifier", "return import(specifier)") as <
+  TModule = Record<string, unknown>,
+>(
+  specifier: string,
+) => Promise<TModule>
+
 // Direct imports for bundled providers
 import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
 import { createAnthropic } from "@ai-sdk/anthropic"
@@ -1302,7 +1308,7 @@ export namespace Provider {
         installedPath = model.api.npm
       }
 
-      const mod = await import(installedPath)
+      const mod = await dynamicImport(installedPath)
 
       const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
       const loaded = fn({

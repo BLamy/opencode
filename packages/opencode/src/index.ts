@@ -31,7 +31,7 @@ import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import path from "path"
-import { Global } from "./global"
+import { ensureGlobalInitialized, Global } from "./global"
 import { JsonMigration } from "./storage/json-migration"
 import { Database } from "./storage/db"
 
@@ -165,49 +165,54 @@ cli = cli
   })
   .strict()
 
-try {
-  await cli.parse()
-} catch (e) {
-  let data: Record<string, any> = {}
-  if (e instanceof NamedError) {
-    const obj = e.toObject()
-    Object.assign(data, {
-      ...obj.data,
-    })
-  }
+async function main() {
+  try {
+    await ensureGlobalInitialized()
+    await cli.parse()
+  } catch (e) {
+    let data: Record<string, any> = {}
+    if (e instanceof NamedError) {
+      const obj = e.toObject()
+      Object.assign(data, {
+        ...obj.data,
+      })
+    }
 
-  if (e instanceof Error) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      cause: e.cause?.toString(),
-      stack: e.stack,
-    })
-  }
+    if (e instanceof Error) {
+      Object.assign(data, {
+        name: e.name,
+        message: e.message,
+        cause: e.cause?.toString(),
+        stack: e.stack,
+      })
+    }
 
-  if (e instanceof ResolveMessage) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
-    })
+    if (e instanceof ResolveMessage) {
+      Object.assign(data, {
+        name: e.name,
+        message: e.message,
+        code: e.code,
+        specifier: e.specifier,
+        referrer: e.referrer,
+        position: e.position,
+        importKind: e.importKind,
+      })
+    }
+    Log.Default.error("fatal", data)
+    const formatted = FormatError(e)
+    if (formatted) UI.error(formatted)
+    if (formatted === undefined) {
+      UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
+      process.stderr.write((e instanceof Error ? e.message : String(e)) + EOL)
+    }
+    process.exitCode = 1
+  } finally {
+    // Some subprocesses don't react properly to SIGTERM and similar signals.
+    // Most notably, some docker-container-based MCP servers don't handle such signals unless
+    // run using `docker run --init`.
+    // Explicitly exit to avoid any hanging subprocesses.
+    process.exit()
   }
-  Log.Default.error("fatal", data)
-  const formatted = FormatError(e)
-  if (formatted) UI.error(formatted)
-  if (formatted === undefined) {
-    UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
-    process.stderr.write((e instanceof Error ? e.message : String(e)) + EOL)
-  }
-  process.exitCode = 1
-} finally {
-  // Some subprocesses don't react properly to SIGTERM and similar signals.
-  // Most notably, some docker-container-based MCP servers don't handle such signals unless
-  // run using `docker run --init`.
-  // Explicitly exit to avoid any hanging subprocesses.
-  process.exit()
 }
+
+void main()

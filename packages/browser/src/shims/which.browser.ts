@@ -4,12 +4,13 @@ type WhichOptions = {
 }
 
 type WhichResult = string | string[] | null
-
 // Browser-compatible 'which' shim
-function resolveCommand(cmd: string): string | null {
+export function resolveCommand(cmd: string): string | null {
   switch (cmd) {
     case "rg":
       return "/opencode/cache/bin/rg"
+    case "node":
+      return "/usr/bin/node"
     case "bash":
       return "/bin/sh"
     case "sh":
@@ -38,12 +39,13 @@ export function sync(cmd: string, options: WhichOptions = {}): WhichResult {
   return resolveResult(cmd, options)
 }
 
-const which = Object.assign((cmd: string, options: WhichOptions = {}): Promise<WhichResult> => {
-  try {
-    return Promise.resolve(resolveResult(cmd, options))
-  } catch (error) {
-    return Promise.reject(error)
-  }
-}, { sync })
+interface WhichFn {
+  (cmd: string, options?: WhichOptions): Promise<WhichResult>
+  sync(cmd: string, options?: WhichOptions): WhichResult
+}
+
+const which: WhichFn = async (cmd, options) => sync(cmd, options)
+
+which.sync = sync
 
 export default which

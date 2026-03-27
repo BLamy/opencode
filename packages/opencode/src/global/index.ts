@@ -26,19 +26,25 @@ export namespace Global {
   }
 }
 
-await Promise.all([
-  fs.mkdir(Global.Path.data, { recursive: true }),
-  fs.mkdir(Global.Path.config, { recursive: true }),
-  fs.mkdir(Global.Path.state, { recursive: true }),
-  fs.mkdir(Global.Path.log, { recursive: true }),
-  fs.mkdir(Global.Path.bin, { recursive: true }),
-])
-
 const CACHE_VERSION = "21"
 
-const version = await Filesystem.readText(path.join(Global.Path.cache, "version")).catch(() => "0")
+let globalInitialization: Promise<void> | undefined
 
-if (version !== CACHE_VERSION) {
+async function initializeGlobalPaths() {
+  await Promise.all([
+    fs.mkdir(Global.Path.data, { recursive: true }),
+    fs.mkdir(Global.Path.config, { recursive: true }),
+    fs.mkdir(Global.Path.state, { recursive: true }),
+    fs.mkdir(Global.Path.log, { recursive: true }),
+    fs.mkdir(Global.Path.bin, { recursive: true }),
+  ])
+
+  const version = await Filesystem.readText(path.join(Global.Path.cache, "version")).catch(() => "0")
+
+  if (version === CACHE_VERSION) {
+    return
+  }
+
   try {
     const contents = await fs.readdir(Global.Path.cache)
     await Promise.all(
@@ -50,5 +56,13 @@ if (version !== CACHE_VERSION) {
       ),
     )
   } catch (e) {}
+
   await Filesystem.write(path.join(Global.Path.cache, "version"), CACHE_VERSION)
 }
+
+export function ensureGlobalInitialized() {
+  globalInitialization ||= initializeGlobalPaths()
+  return globalInitialization
+}
+
+void ensureGlobalInitialized()

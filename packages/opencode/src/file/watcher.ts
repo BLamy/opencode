@@ -1,7 +1,5 @@
 import { Cause, Effect, Layer, Scope, ServiceMap } from "effect"
-// @ts-ignore
-import { createWrapper } from "@parcel/watcher/wrapper"
-import type ParcelWatcher from "@parcel/watcher"
+import * as ParcelWatcher from "@parcel/watcher"
 import { readdir } from "fs/promises"
 import path from "path"
 import z from "zod"
@@ -17,8 +15,6 @@ import { Config } from "../config/config"
 import { FileIgnore } from "./ignore"
 import { Protected } from "./protected"
 import { Log } from "../util/log"
-
-declare const OPENCODE_LIBC: string | undefined
 
 export namespace FileWatcher {
   const log = Log.create({ service: "file.watcher" })
@@ -36,10 +32,7 @@ export namespace FileWatcher {
 
   const watcher = lazy((): typeof import("@parcel/watcher") | undefined => {
     try {
-      const binding = require(
-        `@parcel/watcher-${process.platform}-${process.arch}${process.platform === "linux" ? `-${OPENCODE_LIBC || "glibc"}` : ""}`,
-      )
-      return createWrapper(binding) as typeof import("@parcel/watcher")
+      return ParcelWatcher
     } catch (error) {
       log.error("failed to load watcher binding", { error })
       return

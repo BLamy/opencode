@@ -1,3 +1,5 @@
+import { resolveCommand } from "./which.browser"
+
 function normalizePathname(pathname: string): string {
   if (pathname.startsWith("/") && /^[A-Za-z]:/.test(pathname.slice(1))) {
     return pathname.slice(1)
@@ -35,6 +37,10 @@ async function stdinText(): Promise<string> {
   return ""
 }
 
+export function which(cmd: string): string | null {
+  return resolveCommand(cmd)
+}
+
 function unsupportedServe(): never {
   throw new Error("Bun.serve is unavailable in browser mode")
 }
@@ -50,6 +56,7 @@ const BunShim = {
   stdin: {
     text: stdinText,
   },
+  which,
   stringWidth,
   stripANSI,
   $: unsupportedTemplateTag,

@@ -1259,13 +1259,11 @@ export namespace Config {
 
     const legacy = path.join(Global.Path.config, "config")
     if (existsSync(legacy)) {
-      await import(pathToFileURL(legacy).href, {
-        with: {
-          type: "toml",
-        },
-      })
-        .then(async (mod) => {
-          const { provider, model, ...rest } = mod.default
+      await fs
+        .readFile(legacy, "utf8")
+        .then(async (legacyText) => {
+          const parsed = await load(legacyText, { path: legacy })
+          const { provider, model, ...rest } = parsed
           if (provider && model) result.model = `${provider}/${model}`
           result["$schema"] = "https://opencode.ai/config.json"
           result = mergeDeep(result, rest)
