@@ -63,6 +63,19 @@ const BunShim = {
   version: "browser",
 }
 
+function ensureGlobalBunBinding(): void {
+  const globalEval = globalThis.eval as ((source: string) => unknown) | undefined
+  if (typeof globalEval !== "function") {
+    return
+  }
+
+  try {
+    globalEval("var Bun = globalThis.Bun;")
+  } catch {
+    // Ignore environments that block eval; those call sites must fall back to imports.
+  }
+}
+
 if (typeof globalThis.Bun === "undefined") {
   Object.defineProperty(globalThis, "Bun", {
     value: BunShim,
@@ -70,6 +83,8 @@ if (typeof globalThis.Bun === "undefined") {
     configurable: true,
   })
 }
+
+ensureGlobalBunBinding()
 
 export const serve = unsupportedServe
 export const stdin = BunShim.stdin

@@ -92,6 +92,20 @@ async function saveToIDB(data: Uint8Array): Promise<void> {
   })
 }
 
+async function clearIDB(): Promise<void> {
+  const db = await openIDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite")
+    const store = tx.objectStore(IDB_STORE)
+    store.delete(IDB_KEY)
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
 export async function initBrowserDB(): Promise<SqlJsDatabase> {
   if (_db) return _db
   if (_dbPromise) return _dbPromise
@@ -143,6 +157,32 @@ export async function persistDB(): Promise<void> {
   if (!_db) return
   const data = _db.export()
   await saveToIDB(data)
+}
+
+export async function exportBrowserDBSnapshot(): Promise<Uint8Array | null> {
+  if (_db) {
+    return new Uint8Array(_db.export())
+  }
+
+  const saved = await loadFromIDB()
+  return saved ? new Uint8Array(saved) : null
+}
+
+export async function importBrowserDBSnapshot(data: Uint8Array | null): Promise<void> {
+  if (_db && typeof (_db as { close?: () => void }).close === "function") {
+    ;(_db as { close: () => void }).close()
+  }
+
+  _db = null
+  _dbPromise = null
+
+  if (data && data.length > 0) {
+    await saveToIDB(new Uint8Array(data))
+  } else {
+    await clearIDB()
+  }
+
+  await initBrowserDB()
 }
 
 // Auto-persist every 5 seconds

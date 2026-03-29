@@ -121,12 +121,23 @@ export namespace ModelsDev {
   }
 }
 
-if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
+function getProcessArgv(): string[] {
+  return Array.isArray(process.argv) ? process.argv : []
+}
+
+function maybeUnrefTimer(timer: ReturnType<typeof setInterval>): void {
+  if (typeof timer === "object" && timer !== null && "unref" in timer && typeof timer.unref === "function") {
+    timer.unref()
+  }
+}
+
+if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !getProcessArgv().includes("--get-yargs-completions")) {
   ModelsDev.refresh()
-  setInterval(
+  const refreshInterval = setInterval(
     async () => {
       await ModelsDev.refresh()
     },
     60 * 1000 * 60,
-  ).unref()
+  )
+  maybeUnrefTimer(refreshInterval)
 }
