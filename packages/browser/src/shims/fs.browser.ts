@@ -2,6 +2,8 @@
 // Internal OpenCode state lives in-memory, while /workspace can optionally proxy
 // to an external host such as almostnode's VFS.
 
+import { AsyncLocalStorage } from "async_hooks"
+
 const WORKSPACE_ROOT = "/workspace"
 
 const _files = new Map<string, string>()
@@ -44,6 +46,7 @@ export interface BrowserWorkspaceBridge {
 }
 
 let workspaceBridge: BrowserWorkspaceBridge | null = null
+const scopedWorkspaceBridge = new AsyncLocalStorage<BrowserWorkspaceBridge>()
 
 export function attachWorkspaceBridge(bridge: BrowserWorkspaceBridge): void {
   workspaceBridge = bridge
@@ -52,6 +55,18 @@ export function attachWorkspaceBridge(bridge: BrowserWorkspaceBridge): void {
 
 export function detachWorkspaceBridge(): void {
   workspaceBridge = null
+}
+
+export function withWorkspaceBridgeScope<T>(
+  bridge: BrowserWorkspaceBridge | null | undefined,
+  fn: () => T,
+): T {
+  if (!bridge) {
+    return fn()
+  }
+
+  _dirs.add(WORKSPACE_ROOT)
+  return scopedWorkspaceBridge.run(bridge, fn)
 }
 
 function normalizePath(p: string): string {
@@ -82,8 +97,9 @@ function isBridgedPath(path: string): boolean {
 }
 
 function getWorkspaceBridge(path: string): BrowserWorkspaceBridge | null {
-  if (!workspaceBridge) return null
-  return isWorkspacePath(path) || isBridgedPath(path) ? workspaceBridge : null
+  const bridge = scopedWorkspaceBridge.getStore() ?? workspaceBridge
+  if (!bridge) return null
+  return isWorkspacePath(path) || isBridgedPath(path) ? bridge : null
 }
 
 function createDirent(name: string, type: "file" | "directory"): BrowserWorkspaceDirent {
@@ -356,11 +372,12 @@ export function _vfs_getFile(path: string): string | undefined {
 export function _vfs_listAll(): Map<string, string> {
   const result = new Map(_files)
 
-  if (workspaceBridge) {
-    const files = workspaceBridge.listFiles?.(WORKSPACE_ROOT) ?? []
+  const bridge = scopedWorkspaceBridge.getStore() ?? workspaceBridge
+  if (bridge) {
+    const files = bridge.listFiles?.(WORKSPACE_ROOT) ?? []
     for (const path of files) {
       const normalized = normalizePath(path)
-      const content = workspaceBridge.readFile(normalized)
+      const content = bridge.readFile(normalized)
       if (content !== undefined) {
         result.set(normalized, content)
       }
@@ -442,6 +459,7 @@ export default {
   mkdtemp,
   attachWorkspaceBridge,
   detachWorkspaceBridge,
+  withWorkspaceBridgeScope,
   _vfs_setFile,
   _vfs_getFile,
   _vfs_listAll,

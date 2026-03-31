@@ -509,6 +509,11 @@ export namespace Config {
   }
 
   async function loadPlugin(dir: string) {
+    if (isBrowserChannel()) {
+      log.debug("skipping local plugin discovery in browser mode", { dir })
+      return []
+    }
+
     const plugins: string[] = []
 
     for (const item of await Glob.scan("{plugin,plugins}/*.{ts,js}", {

@@ -16,12 +16,12 @@ export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
   await Plugin.init()
   ShareNext.init()
-  Format.init()
+  await Format.init()
   await LSP.init()
-  File.init()
-  FileWatcher.init()
-  Vcs.init()
-  Snapshot.init()
+  await File.init()
+  await FileWatcher.init()
+  await Vcs.init()
+  await Snapshot.init()
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

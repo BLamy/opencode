@@ -100,6 +100,10 @@ export namespace Plugin {
             for (let plugin of plugins) {
               if (DEPRECATED_PLUGIN_PACKAGES.some((pkg) => plugin.includes(pkg))) continue
               log.info("loading plugin", { path: plugin })
+              if (Installation.CHANNEL === "browser" && plugin.startsWith("file://")) {
+                log.warn("skipping local file plugin in browser mode", { plugin })
+                continue
+              }
               if (!plugin.startsWith("file://")) {
                 if (Installation.CHANNEL === "browser") {
                   log.warn("skipping package plugin install in browser mode", { plugin })

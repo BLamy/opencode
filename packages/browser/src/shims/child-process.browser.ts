@@ -2,6 +2,7 @@
 // Uses a small built-in command set and can optionally delegate to an external
 // host runtime such as almostnode for real shell execution.
 
+import { AsyncLocalStorage } from "async_hooks"
 import { EventEmitter } from "events"
 import path from "path"
 import { PassThrough } from "stream"
@@ -20,6 +21,7 @@ export interface BrowserProcessBridge {
 }
 
 let processBridge: BrowserProcessBridge | null = null
+const scopedProcessBridge = new AsyncLocalStorage<BrowserProcessBridge>()
 
 export function attachProcessBridge(bridge: BrowserProcessBridge): void {
   processBridge = bridge
@@ -27,6 +29,17 @@ export function attachProcessBridge(bridge: BrowserProcessBridge): void {
 
 export function detachProcessBridge(): void {
   processBridge = null
+}
+
+export function withProcessBridgeScope<T>(
+  bridge: BrowserProcessBridge | null | undefined,
+  fn: () => T,
+): T {
+  if (!bridge) {
+    return fn()
+  }
+
+  return scopedProcessBridge.run(bridge, fn)
 }
 
 class FakeChildProcess extends EventEmitter {
@@ -145,8 +158,9 @@ async function executeCommand(
     return runRipgrep(args, cwd)
   }
 
-  if (processBridge) {
-    return processBridge.exec({
+  const bridge = scopedProcessBridge.getStore() ?? processBridge
+  if (bridge) {
+    return bridge.exec({
       command,
       args,
       cwd,
@@ -316,4 +330,5 @@ export default {
   spawnSync,
   attachProcessBridge,
   detachProcessBridge,
+  withProcessBridgeScope,
 }

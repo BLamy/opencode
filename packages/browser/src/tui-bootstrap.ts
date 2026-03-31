@@ -17,8 +17,14 @@ import type { EventSource } from "../../opencode/src/cli/cmd/tui/context/sdk"
 import type { Args } from "../../opencode/src/cli/cmd/tui/context/args"
 import { Instance } from "../../opencode/src/project/instance"
 import { initBrowserDB, startAutoPersist } from "./shims/db.browser"
-import { attachProcessBridge, detachProcessBridge, type BrowserProcessBridge } from "./shims/child-process.browser"
-import { attachWorkspaceBridge, detachWorkspaceBridge, type BrowserWorkspaceBridge } from "./shims/fs.browser"
+import {
+  withProcessBridgeScope,
+  type BrowserProcessBridge,
+} from "./shims/child-process.browser"
+import {
+  withWorkspaceBridgeScope,
+  type BrowserWorkspaceBridge,
+} from "./shims/fs.browser"
 import { Server } from "../../opencode/src/server/server"
 
 type ThemeMode = "dark" | "light"
@@ -299,10 +305,57 @@ class XtermBrowserHost implements BrowserTerminalHost {
   }
 }
 
-function createInternalFetch(): typeof fetch {
+function withScopedBridges<T>(
+  workspaceBridge: BrowserWorkspaceBridge,
+  processBridge: BrowserProcessBridge | undefined,
+  fn: () => T,
+): T {
+  return withWorkspaceBridgeScope(workspaceBridge, () =>
+    withProcessBridgeScope(processBridge, fn),
+  )
+}
+
+function scopeResponseBody(
+  response: Response,
+  runWithScope: <T>(fn: () => T) => T,
+): Response {
+  if (!response.body) {
+    return response
+  }
+
+  const reader = response.body.getReader()
+  const scopedBody = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const result = await runWithScope(() => reader.read())
+      if (result.done) {
+        controller.close()
+        return
+      }
+
+      controller.enqueue(result.value)
+    },
+    async cancel(reason) {
+      await runWithScope(() => reader.cancel(reason))
+    },
+  })
+
+  return new Response(scopedBody, {
+    headers: new Headers(response.headers),
+    status: response.status,
+    statusText: response.statusText,
+  })
+}
+
+function createInternalFetch(
+  workspaceBridge: BrowserWorkspaceBridge,
+  processBridge?: BrowserProcessBridge,
+): typeof fetch {
+  const runWithScope = <T>(fn: () => T) => withScopedBridges(workspaceBridge, processBridge, fn)
+
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
-    return Server.Default().fetch(request)
+    const response = await runWithScope(() => Server.Default().fetch(request))
+    return scopeResponseBody(response, runWithScope)
   }) as typeof fetch
 }
 
@@ -375,11 +428,6 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
   window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ = mountId
   const directory = options.directory ?? "/workspace"
 
-  attachWorkspaceBridge(options.workspaceBridge)
-  if (options.processBridge) {
-    attachProcessBridge(options.processBridge)
-  }
-
   await initBrowserDB()
   startAutoPersist()
   await loadBrowserRenderLib(options.wasmUrl ? { wasmUrl: options.wasmUrl } : {})
@@ -418,12 +466,14 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
     onDestroy: () => host.destroy(),
   })
 
-  const fetchFn = createInternalFetch()
+  const fetchFn = createInternalFetch(options.workspaceBridge, options.processBridge)
   const events = createInternalEventSource(directory, fetchFn)
-  const config = await Instance.provide({
-    directory,
-    fn: () => TuiConfig.get(),
-  })
+  const config = await withScopedBridges(options.workspaceBridge, options.processBridge, () =>
+    Instance.provide({
+      directory,
+      fn: () => TuiConfig.get(),
+    }),
+  )
 
   let disposed = false
   let session:
@@ -442,8 +492,6 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
     renderer.destroy()
     host.destroy()
     term.dispose()
-    detachWorkspaceBridge()
-    detachProcessBridge()
   }
 
   const exited = tui({
