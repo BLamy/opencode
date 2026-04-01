@@ -6,7 +6,13 @@ import { AsyncLocalStorage } from "async_hooks"
 import { EventEmitter } from "events"
 import path from "path"
 import { PassThrough } from "stream"
-import { _vfs_addDir, _vfs_getFile, _vfs_listAll, _vfs_readdir } from "./fs.browser"
+import {
+  _vfs_addDir,
+  _vfs_getFile,
+  _vfs_listAll,
+  _vfs_readdir,
+  getWorkspaceRoot,
+} from "./fs.browser"
 
 export interface BrowserProcessBridge {
   exec(input: {
@@ -152,7 +158,7 @@ async function executeCommand(
   args: string[],
   opts: Record<string, any> = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const cwd = opts.cwd || "/workspace"
+  const cwd = opts.cwd || getWorkspaceRoot()
 
   if (isRgCommand(command)) {
     return runRipgrep(args, cwd)
@@ -304,7 +310,7 @@ export function fork(): any {
 
 export function spawnSync(command: string, args: string[] = []): any {
   if (isRgCommand(command)) {
-    const result = runRipgrep(args, "/workspace")
+    const result = runRipgrep(args, getWorkspaceRoot())
     return {
       status: result.code,
       stdout: Buffer.from(result.stdout),

@@ -4,6 +4,10 @@
 import { tool, jsonSchema } from "ai"
 import * as vfs from "./shims/fs.browser"
 
+function getWorkspaceRoot(): string {
+  return vfs.getWorkspaceRoot()
+}
+
 // Use jsonSchema instead of Zod to avoid Zod v4 incompatibility with Anthropic API
 // (Zod v4 omits `type: "object"` which the API requires)
 
@@ -134,12 +138,12 @@ export const globTool = tool({
     type: "object",
     properties: {
       pattern: { type: "string", description: "Glob pattern (e.g., '**/*.ts', 'src/**/*.tsx')" },
-      path: { type: "string", description: "Directory to search in (defaults to /workspace)" },
+      path: { type: "string", description: "Directory to search in (defaults to the workspace root)" },
     },
     required: ["pattern"],
   }),
   execute: async ({ pattern, path: searchPath }) => {
-    const basePath = resolvePath(searchPath || "/workspace")
+    const basePath = resolvePath(searchPath || getWorkspaceRoot())
     const allFiles = vfs._vfs_listAll()
     const matches: string[] = []
 
@@ -153,7 +157,7 @@ export const globTool = tool({
     }
 
     if (matches.length === 0) {
-      return `No files matched pattern "${pattern}" in ${searchPath || "/workspace"}`
+      return `No files matched pattern "${pattern}" in ${searchPath || getWorkspaceRoot()}`
     }
 
     return `Found ${matches.length} file(s):\n${matches.join("\n")}`
@@ -166,13 +170,13 @@ export const grepTool = tool({
     type: "object",
     properties: {
       pattern: { type: "string", description: "Text or regex pattern to search for" },
-      path: { type: "string", description: "Directory to search in (defaults to /workspace)" },
+      path: { type: "string", description: "Directory to search in (defaults to the workspace root)" },
       include: { type: "string", description: "File glob pattern to include (e.g., '*.ts')" },
     },
     required: ["pattern"],
   }),
   execute: async ({ pattern, path: searchPath, include }) => {
-    const basePath = resolvePath(searchPath || "/workspace")
+    const basePath = resolvePath(searchPath || getWorkspaceRoot())
     const allFiles = vfs._vfs_listAll()
     const results: string[] = []
     let regex: RegExp
@@ -210,16 +214,16 @@ export const listTool = tool({
   parameters: jsonSchema<{ path?: string }>({
     type: "object",
     properties: {
-      path: { type: "string", description: "Directory path to list (defaults to /workspace)" },
+      path: { type: "string", description: "Directory path to list (defaults to the workspace root)" },
     },
     required: [],
   }),
   execute: async ({ path: dirPath }) => {
-    const resolvedPath = resolvePath(dirPath || "/workspace")
+    const resolvedPath = resolvePath(dirPath || getWorkspaceRoot())
     try {
       const entries = await vfs.readdir(resolvedPath, { withFileTypes: true })
       if (entries.length === 0) {
-        return `Directory is empty: ${dirPath || "/workspace"}`
+        return `Directory is empty: ${dirPath || getWorkspaceRoot()}`
       }
 
       const formatted = entries.map((entry: any) => {
@@ -272,7 +276,7 @@ export const bashTool = tool({
 
 function resolvePath(inputPath: string): string {
   if (inputPath.startsWith("/")) return inputPath
-  return "/workspace/" + inputPath
+  return `${getWorkspaceRoot()}/${inputPath}`
 }
 
 function matchGlob(filepath: string, pattern: string): boolean {

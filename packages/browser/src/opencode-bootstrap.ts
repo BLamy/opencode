@@ -15,9 +15,12 @@ import {
   listTool,
   bashTool,
 } from "./browser-tools"
+import { getWorkspaceRoot } from "./shims/fs.browser"
 
-const SYSTEM_PROMPT = `You are OpenCode, an AI-powered development assistant running in the browser.
-You have access to a virtual filesystem with a demo TypeScript project at /workspace.
+function getSystemPrompt(): string {
+  const workspaceRoot = getWorkspaceRoot()
+  return `You are OpenCode, an AI-powered development assistant running in the browser.
+You have access to a virtual filesystem with a demo TypeScript project at ${workspaceRoot}.
 
 Available tools:
 - read: Read file contents
@@ -32,12 +35,13 @@ Guidelines:
 - Always read files before editing them
 - Prefer edit for existing files; use write for new files or explicit full rewrites
 - Use replaceAll only when every matching occurrence should change
-- Use relative paths from /workspace when possible
+- Use relative paths from ${workspaceRoot} when possible
 - Show your reasoning briefly before making changes
 - After making edits, explain what you changed and why
 - Keep responses concise and focused
 
-The project at /workspace is a TypeScript project with some intentional bugs in src/utils/helpers.ts.`
+The project at ${workspaceRoot} is a TypeScript project with some intentional bugs in src/utils/helpers.ts.`
+}
 
 const MODEL = "claude-sonnet-4-20250514"
 
@@ -88,7 +92,7 @@ export class BrowserAgent {
 
       const result = streamText({
         model: this.anthropic(MODEL),
-        system: SYSTEM_PROMPT,
+        system: getSystemPrompt(),
         messages: this.messages,
         tools: this.tools,
         maxSteps: 25,
@@ -231,7 +235,7 @@ export class BrowserAgent {
         this.terminal.writeToolResult("✱", `Grep "${args.pattern}"`, output)
         break
       case "list":
-        this.terminal.writeToolResult("→", `List ${args.path || "/workspace"}`, output)
+        this.terminal.writeToolResult("→", `List ${args.path || getWorkspaceRoot()}`, output)
         break
       case "bash":
         this.terminal.writeToolResult("$", args.command, undefined, output)

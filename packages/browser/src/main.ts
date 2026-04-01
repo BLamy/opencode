@@ -6,6 +6,7 @@ import { TerminalAdapter } from "./terminal-adapter"
 import { seedDemoProject } from "./seed-project"
 import { initBrowserDB, startAutoPersist, persistDB } from "./shims/db.browser"
 import { BrowserAgent } from "./opencode-bootstrap"
+import { getWorkspaceRoot } from "./shims/fs.browser"
 
 let terminal: TerminalAdapter
 let agent: BrowserAgent | null = null
@@ -85,7 +86,7 @@ function initAgent(apiKey: string) {
   agent = new BrowserAgent(apiKey, terminal)
   terminal.writeln("")
   terminal.writeInfo("Connected! Type a message to start chatting with the AI agent.")
-  terminal.writeInfo("The agent can read, write, and edit files in the demo project at /workspace.")
+  terminal.writeInfo(`The agent can read, write, and edit files in the demo project at ${getWorkspaceRoot()}.`)
   terminal.writeln("")
   terminal.writeInfo("Try: \"Look at the helper functions in src/utils/helpers.ts and fix the bugs\"")
   terminal.writeln("")

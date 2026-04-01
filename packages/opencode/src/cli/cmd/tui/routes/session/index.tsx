@@ -1885,8 +1885,36 @@ function Glob(props: ToolProps<typeof GlobTool>) {
 }
 
 function Read(props: ToolProps<typeof ReadTool>) {
-  const { theme } = useTheme()
+  const { theme, syntax } = useTheme()
   const isRunning = createMemo(() => props.part.state.status === "running")
+  const preview = createMemo(() => {
+    if (props.part.state.status !== "completed") return ""
+    if (props.part.state.time.compacted) return ""
+    const value = props.metadata.preview
+    if (typeof value !== "string") return ""
+    return value.trimEnd()
+  })
+  const previewLines = createMemo(() => (preview() ? preview().split("\n") : []))
+  const previewOverflow = createMemo(() => previewLines().length > 6)
+  const previewText = createMemo(() => {
+    if (!previewOverflow()) return preview()
+    return [...previewLines().slice(0, 6), "…"].join("\n")
+  })
+  const lineNumberOffset = createMemo(() => {
+    const offset = props.input.offset
+    return typeof offset === "number" && Number.isFinite(offset) ? Math.max(0, offset - 1) : 0
+  })
+  const description = createMemo(() => input(props.input, ["filePath"]))
+  const title = createMemo(() => {
+    const filePath = normalizePath(props.input.filePath!)
+    const extra = description()
+    return extra ? `# Read ${filePath} ${extra}` : `# Read ${filePath}`
+  })
+  const showPreviewHint = createMemo(() => {
+    if (props.part.state.status !== "completed") return false
+    if (props.part.state.time.compacted) return false
+    return previewOverflow() || props.metadata.truncated === true
+  })
   const loaded = createMemo(() => {
     if (props.part.state.status !== "completed") return []
     if (props.part.state.time.compacted) return []
@@ -1896,15 +1924,42 @@ function Read(props: ToolProps<typeof ReadTool>) {
   })
   return (
     <>
-      <InlineTool
-        icon="→"
-        pending="Reading file..."
-        complete={props.input.filePath}
-        spinner={isRunning()}
-        part={props.part}
-      >
-        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
-      </InlineTool>
+      <Switch>
+        <Match when={preview()}>
+          <BlockTool title={title()} part={props.part} spinner={isRunning()}>
+            <line_number
+              fg={theme.textMuted}
+              minWidth={3}
+              paddingRight={1}
+              lineNumberOffset={lineNumberOffset()}
+            >
+              <code
+                conceal={false}
+                fg={theme.text}
+                filetype={filetype(props.input.filePath!)}
+                syntaxStyle={syntax()}
+                content={previewText()}
+              />
+            </line_number>
+            <Show when={showPreviewHint()}>
+              <text paddingLeft={3} fg={theme.textMuted}>
+                Preview only. The full read output was available to the agent.
+              </text>
+            </Show>
+          </BlockTool>
+        </Match>
+        <Match when={true}>
+          <InlineTool
+            icon="→"
+            pending="Reading file..."
+            complete={props.input.filePath}
+            spinner={isRunning()}
+            part={props.part}
+          >
+            Read {normalizePath(props.input.filePath!)} {description()}
+          </InlineTool>
+        </Match>
+      </Switch>
       <For each={loaded()}>
         {(filepath) => (
           <box paddingLeft={3}>

@@ -23,6 +23,7 @@ import {
 } from "./shims/child-process.browser"
 import {
   withWorkspaceBridgeScope,
+  getWorkspaceRoot,
   type BrowserWorkspaceBridge,
 } from "./shims/fs.browser"
 import { Server } from "../../opencode/src/server/server"
@@ -426,7 +427,7 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
   const debugSession = new URLSearchParams(window.location.search).has("debugsession")
   const mountId = (window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ ?? 0) + 1
   window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ = mountId
-  const directory = options.directory ?? "/workspace"
+  const directory = options.directory ?? getWorkspaceRoot()
 
   await initBrowserDB()
   startAutoPersist()

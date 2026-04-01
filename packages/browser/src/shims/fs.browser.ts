@@ -1,10 +1,13 @@
 // Browser-compatible fs/promises shim.
-// Internal OpenCode state lives in-memory, while /workspace can optionally proxy
-// to an external host such as almostnode's VFS.
+// Internal OpenCode state lives in-memory, while the configured workspace root
+// can optionally proxy to an external host such as almostnode's VFS.
 
 import { AsyncLocalStorage } from "async_hooks"
 
-const WORKSPACE_ROOT = "/workspace"
+const DEFAULT_WORKSPACE_ROOT = "/workspace"
+
+let primaryWorkspaceRoot = DEFAULT_WORKSPACE_ROOT
+let workspaceRootAliases = new Set<string>([DEFAULT_WORKSPACE_ROOT])
 
 const _files = new Map<string, string>()
 const _dirs = new Set<string>([
@@ -16,7 +19,7 @@ const _dirs = new Set<string>([
   "/opencode/state",
   "/opencode/data/log",
   "/opencode/cache/bin",
-  WORKSPACE_ROOT,
+  DEFAULT_WORKSPACE_ROOT,
 ])
 
 export interface BrowserWorkspaceDirent {
@@ -45,12 +48,36 @@ export interface BrowserWorkspaceBridge {
   listFiles?(root?: string): string[]
 }
 
+export function getWorkspaceRoot(): string {
+  return primaryWorkspaceRoot
+}
+
+export function getWorkspaceRoots(): string[] {
+  return Array.from(workspaceRootAliases)
+}
+
+export function setWorkspaceRoot(path: string, aliases: string[] = []): void {
+  const normalizedRoot = normalizePath(path)
+  primaryWorkspaceRoot = normalizedRoot
+  workspaceRootAliases = new Set<string>([
+    DEFAULT_WORKSPACE_ROOT,
+    normalizedRoot,
+    ...aliases.map((value) => normalizePath(value)),
+  ])
+
+  for (const root of workspaceRootAliases) {
+    _dirs.add(root)
+  }
+}
+
 let workspaceBridge: BrowserWorkspaceBridge | null = null
 const scopedWorkspaceBridge = new AsyncLocalStorage<BrowserWorkspaceBridge>()
 
 export function attachWorkspaceBridge(bridge: BrowserWorkspaceBridge): void {
   workspaceBridge = bridge
-  _dirs.add(WORKSPACE_ROOT)
+  for (const root of workspaceRootAliases) {
+    _dirs.add(root)
+  }
 }
 
 export function detachWorkspaceBridge(): void {
@@ -65,7 +92,9 @@ export function withWorkspaceBridgeScope<T>(
     return fn()
   }
 
-  _dirs.add(WORKSPACE_ROOT)
+  for (const root of workspaceRootAliases) {
+    _dirs.add(root)
+  }
   return scopedWorkspaceBridge.run(bridge, fn)
 }
 
@@ -89,7 +118,9 @@ function ensureParentDirs(filePath: string) {
 }
 
 function isWorkspacePath(path: string): boolean {
-  return path === WORKSPACE_ROOT || path.startsWith(`${WORKSPACE_ROOT}/`)
+  return Array.from(workspaceRootAliases).some((root) => (
+    path === root || path.startsWith(`${root}/`)
+  ))
 }
 
 function isBridgedPath(path: string): boolean {
@@ -374,7 +405,7 @@ export function _vfs_listAll(): Map<string, string> {
 
   const bridge = scopedWorkspaceBridge.getStore() ?? workspaceBridge
   if (bridge) {
-    const files = bridge.listFiles?.(WORKSPACE_ROOT) ?? []
+    const files = bridge.listFiles?.(primaryWorkspaceRoot) ?? []
     for (const path of files) {
       const normalized = normalizePath(path)
       const content = bridge.readFile(normalized)
