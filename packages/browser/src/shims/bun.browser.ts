@@ -1,3 +1,6 @@
+import wrapAnsiNpm from "wrap-ansi"
+import * as yaml from "yaml"
+import { compare, satisfies as semverSatisfies } from "./semver.browser"
 import { resolveCommand } from "./which.browser"
 
 function normalizePathname(pathname: string): string {
@@ -37,6 +40,12 @@ async function stdinText(): Promise<string> {
   return ""
 }
 
+type WrapAnsiOptions = {
+  hard?: boolean
+  wordWrap?: boolean
+  trim?: boolean
+}
+
 type HashInput = string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView
 type HashSeed = number | bigint
 type BunHash64 = (input: HashInput, seed?: HashSeed) => bigint
@@ -61,6 +70,7 @@ const FNV32_OFFSET_BASIS = 0x811c9dc5
 const FNV32_PRIME = 0x01000193
 const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n
 const FNV64_PRIME = 0x100000001b3n
+const UTF8_BOM = "\ufeff"
 
 function normalizeHashInput(input: HashInput): Uint8Array {
   if (typeof input === "string") {
@@ -134,6 +144,138 @@ hash.xxHash32 = (input, seed) => hash32(input, seed, 0xc2b2ae35)
 hash.murmur32v2 = (input, seed) => hash32(input, seed, 0x27d4eb2d)
 hash.murmur32v3 = (input, seed) => hash32(input, seed, 0x165667b1)
 
+function unsupportedListen(): never {
+  throw new Error("Bun.listen is unavailable in browser mode")
+}
+
+function unsupportedSpawn(): never {
+  throw new Error("Bun.spawn is unavailable in browser mode")
+}
+
+function unsupportedGenerateHeapSnapshot(): never {
+  throw new Error("Bun.generateHeapSnapshot is unavailable in browser mode")
+}
+
+function gc(): void {}
+
+function wrapAnsi(
+  input: string,
+  columns: number,
+  options?: WrapAnsiOptions,
+): string {
+  return wrapAnsiNpm(input, columns, options)
+}
+
+type JSONLParseResult = {
+  values: unknown[]
+  error: null | Error
+  read: number
+  done: boolean
+}
+
+function normalizeJSONLInput(data: string | Buffer, offset: number): { content: string; offset: number; length: number } {
+  if (typeof data === "string") {
+    const normalizedOffset =
+      offset === 0 && data.startsWith(UTF8_BOM)
+        ? UTF8_BOM.length
+        : offset
+    return {
+      content: data,
+      offset: normalizedOffset,
+      length: data.length,
+    }
+  }
+
+  let normalizedOffset = offset
+  if (
+    normalizedOffset === 0 &&
+    data.length >= 3 &&
+    data[0] === 0xef &&
+    data[1] === 0xbb &&
+    data[2] === 0xbf
+  ) {
+    normalizedOffset = 3
+  }
+
+  return {
+    content: data.toString("utf8"),
+    offset: normalizedOffset,
+    length: data.length,
+  }
+}
+
+function parseJSONLChunk(
+  data: string | Buffer,
+  offset = 0,
+): JSONLParseResult {
+  const normalized = normalizeJSONLInput(data, offset)
+  const values: unknown[] = []
+  let cursor = normalized.offset
+
+  while (cursor < normalized.length) {
+    const newlineIndex = normalized.content.indexOf("\n", cursor)
+    const lineEnd = newlineIndex === -1 ? normalized.length : newlineIndex
+    const rawLine = normalized.content.slice(cursor, lineEnd)
+    const line = rawLine.trim()
+
+    if (line) {
+      try {
+        values.push(JSON.parse(line))
+      } catch (error) {
+        return {
+          values,
+          error: error instanceof Error ? error : new Error(String(error)),
+          read: cursor,
+          done: false,
+        }
+      }
+    }
+
+    if (newlineIndex === -1) {
+      return {
+        values,
+        error: null,
+        read: normalized.length,
+        done: true,
+      }
+    }
+
+    cursor = newlineIndex + 1
+  }
+
+  return {
+    values,
+    error: null,
+    read: normalized.length,
+    done: true,
+  }
+}
+
+const JSONL = {
+  parseChunk: parseJSONLChunk,
+}
+
+const semver = {
+  order(a: string, b: string): -1 | 0 | 1 {
+    const result = compare(a, b, { loose: true })
+    if (result > 0) return 1
+    if (result < 0) return -1
+    return 0
+  },
+  satisfies(version: string, range: string): boolean {
+    return semverSatisfies(version, range, { loose: true })
+  },
+}
+
+const YAML = {
+  parse(input: string): unknown {
+    return yaml.parse(input)
+  },
+  stringify(value: unknown): string {
+    return yaml.stringify(value)
+  },
+}
+
 export function which(cmd: string): string | null {
   return resolveCommand(cmd)
 }
@@ -149,12 +291,21 @@ function unsupportedTemplateTag(): never {
 const BunShim = {
   fileURLToPath,
   pathToFileURL,
+  listen: unsupportedListen,
   serve: unsupportedServe,
+  spawn: unsupportedSpawn,
   stdin: {
     text: stdinText,
   },
   which,
   hash,
+  semver,
+  YAML,
+  JSONL,
+  gc,
+  wrapAnsi,
+  embeddedFiles: [] as string[],
+  generateHeapSnapshot: unsupportedGenerateHeapSnapshot,
   stringWidth,
   stripANSI,
   $: unsupportedTemplateTag,
@@ -191,7 +342,11 @@ ensureGlobalBunBinding()
 
 export const serve = unsupportedServe
 export const stdin = BunShim.stdin
-export { hash, stringWidth, stripANSI }
+export const listen = unsupportedListen
+export const spawn = unsupportedSpawn
+export const generateHeapSnapshot = unsupportedGenerateHeapSnapshot
+export const embeddedFiles = BunShim.embeddedFiles
+export { JSONL, YAML, gc, hash, semver, stringWidth, stripANSI, wrapAnsi }
 export const $ = unsupportedTemplateTag
 export const version = BunShim.version
 

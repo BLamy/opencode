@@ -37,12 +37,31 @@ async function loadOpencodeMigrations(): Promise<Array<{ sql: string; timestamp:
   )
 }
 
+function resolveVirtualModules(aliases: Record<string, string>) {
+  return {
+    name: "resolve-virtual-modules",
+    enforce: "pre" as const,
+    resolveId(source: string) {
+      return aliases[source] ?? null
+    },
+  }
+}
+
 export default defineConfig(async () => {
   const opencodeMigrations = await loadOpencodeMigrations()
+
+  const bunBundleShimPath = path.resolve(__dirname, "src/shims/bun-bundle.browser.ts")
+  const bunSqliteShimPath = path.resolve(__dirname, "src/shims/bun-sqlite.browser.ts")
+  const bunPtyShimPath = path.resolve(__dirname, "src/shims/pty.browser.ts")
 
   return {
   root: __dirname,
   plugins: [
+    resolveVirtualModules({
+      "bun:bundle": bunBundleShimPath,
+      "bun:sqlite": bunSqliteShimPath,
+      "bun-pty": bunPtyShimPath,
+    }),
     nodePolyfills({
       include: [
         "path",
@@ -85,12 +104,13 @@ export default defineConfig(async () => {
 
       // Database: bun:sqlite / #db → sql.js shim
       "#db": path.resolve(__dirname, "src/shims/db.browser.ts"),
-      "bun:sqlite": path.resolve(__dirname, "src/shims/bun-sqlite.browser.ts"),
+      "bun:bundle": bunBundleShimPath,
+      "bun:sqlite": bunSqliteShimPath,
       "drizzle-orm/bun-sqlite": path.resolve(__dirname, "src/shims/drizzle-bun-sqlite.browser.ts"),
       "drizzle-orm/bun-sqlite/migrator": path.resolve(__dirname, "src/shims/drizzle-bun-sqlite-migrator.browser.ts"),
 
       // PTY: bun-pty → stub
-      "bun-pty": path.resolve(__dirname, "src/shims/pty.browser.ts"),
+      "bun-pty": bunPtyShimPath,
 
       // File watching → stub
       "@parcel/watcher": path.resolve(__dirname, "src/shims/watcher.browser.ts"),

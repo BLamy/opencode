@@ -1,41 +1,18 @@
-// Minimal semver shim for browser
-export function valid(version: string): string | null {
-  const match = /^v?(\d+\.\d+\.\d+)/.exec(version)
-  return match ? match[1] : null
-}
+import semverPackage from "../../../../node_modules/semver/index.js"
 
-export function gt(a: string, b: string): boolean {
-  const pa = (valid(a) || "0.0.0").split(".").map(Number)
-  const pb = (valid(b) || "0.0.0").split(".").map(Number)
-  for (let i = 0; i < 3; i++) {
-    if (pa[i] > pb[i]) return true
-    if (pa[i] < pb[i]) return false
-  }
-  return false
-}
+const semver = semverPackage as typeof import("semver")
 
-export function gte(a: string, b: string): boolean {
-  return a === b || gt(a, b)
-}
+export const valid = semver.valid
+export const gt = semver.gt
+export const gte = semver.gte
+export const lt = semver.lt
+export const lte = semver.lte
+export const satisfies = semver.satisfies
+export const coerce = semver.coerce
+export const parse = semver.parse
+export const compare = semver.compare
+export const major = semver.major
+export const minor = semver.minor
+export const patch = semver.patch
 
-export function lt(a: string, b: string): boolean {
-  return gt(b, a)
-}
-
-export function satisfies(_version: string, _range: string): boolean {
-  return true // Always satisfied in browser demo
-}
-
-export function coerce(version: string): { version: string } | null {
-  const v = valid(version)
-  return v ? { version: v } : null
-}
-
-export function parse(version: string): any {
-  const v = valid(version)
-  if (!v) return null
-  const [major, minor, patch] = v.split(".").map(Number)
-  return { major, minor, patch, version: v }
-}
-
-export default { valid, gt, gte, lt, satisfies, coerce, parse }
+export default semver
