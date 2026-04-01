@@ -23,6 +23,49 @@ function getInitSqlJs(): InitSqlJs | undefined {
   return typeof candidate === "function" ? candidate : undefined
 }
 
+function getErrorText(error: unknown, depth = 0): string {
+  if (depth >= 4 || error == null) {
+    return ""
+  }
+
+  if (typeof error === "string") {
+    return error
+  }
+
+  if (error instanceof Error) {
+    return [
+      error.message,
+      error.stack,
+      getErrorText(error.cause, depth + 1),
+    ]
+      .filter(Boolean)
+      .join("\n")
+  }
+
+  if (typeof error === "object") {
+    const message = "message" in error && typeof error.message === "string" ? error.message : ""
+    const cause = "cause" in error ? getErrorText(error.cause, depth + 1) : ""
+    return [message, cause].filter(Boolean).join("\n")
+  }
+
+  return String(error)
+}
+
+export function isRecoverableBrowserDBError(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes("out of memory") ||
+    text.includes("file is not a database") ||
+    text.includes("database disk image is malformed")
+  )
+}
+
+function closeBrowserDB(): void {
+  if (_db && typeof (_db as { close?: () => void }).close === "function") {
+    ;(_db as { close: () => void }).close()
+  }
+}
+
 function loadSqlJs(): Promise<InitSqlJs> {
   const existing = getInitSqlJs()
   if (existing) {
@@ -131,9 +174,23 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
     }
 
     const saved = await loadFromIDB()
-    if (saved) {
+    if (!saved) {
+      _db = new _SQL.Database()
+      return _db
+    }
+
+    try {
       _db = new _SQL.Database(saved)
-    } else {
+    } catch (error) {
+      if (!isRecoverableBrowserDBError(error)) {
+        throw error
+      }
+
+      console.warn(
+        "[opencode-browser] Failed to restore persisted database snapshot; clearing it and recreating an empty database.",
+        error,
+      )
+      await clearIDB()
       _db = new _SQL.Database()
     }
 
@@ -169,9 +226,7 @@ export async function exportBrowserDBSnapshot(): Promise<Uint8Array | null> {
 }
 
 export async function importBrowserDBSnapshot(data: Uint8Array | null): Promise<void> {
-  if (_db && typeof (_db as { close?: () => void }).close === "function") {
-    ;(_db as { close: () => void }).close()
-  }
+  closeBrowserDB()
 
   _db = null
   _dbPromise = null
@@ -183,6 +238,14 @@ export async function importBrowserDBSnapshot(data: Uint8Array | null): Promise<
   }
 
   await initBrowserDB()
+}
+
+export async function resetBrowserDB(): Promise<SqlJsDatabase> {
+  closeBrowserDB()
+  _db = null
+  _dbPromise = null
+  await clearIDB()
+  return initBrowserDB()
 }
 
 // Auto-persist every 5 seconds

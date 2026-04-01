@@ -37,6 +37,103 @@ async function stdinText(): Promise<string> {
   return ""
 }
 
+type HashInput = string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView
+type HashSeed = number | bigint
+type BunHash64 = (input: HashInput, seed?: HashSeed) => bigint
+type BunHash32 = (input: HashInput, seed?: HashSeed) => number
+type BunHash = BunHash64 & {
+  wyhash: BunHash64
+  rapidhash: BunHash64
+  cityHash64: BunHash64
+  xxHash64: BunHash64
+  xxHash3: BunHash64
+  murmur64v2: BunHash64
+  crc32: BunHash32
+  adler32: BunHash32
+  cityHash32: BunHash32
+  xxHash32: BunHash32
+  murmur32v2: BunHash32
+  murmur32v3: BunHash32
+}
+
+const textEncoder = new TextEncoder()
+const FNV32_OFFSET_BASIS = 0x811c9dc5
+const FNV32_PRIME = 0x01000193
+const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n
+const FNV64_PRIME = 0x100000001b3n
+
+function normalizeHashInput(input: HashInput): Uint8Array {
+  if (typeof input === "string") {
+    return textEncoder.encode(input)
+  }
+
+  if (input instanceof ArrayBuffer) {
+    return new Uint8Array(input)
+  }
+
+  if (typeof SharedArrayBuffer !== "undefined" && input instanceof SharedArrayBuffer) {
+    return new Uint8Array(input)
+  }
+
+  if (ArrayBuffer.isView(input)) {
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+  }
+
+  throw new TypeError("Bun.hash input must be a string, TypedArray, DataView, ArrayBuffer, or SharedArrayBuffer")
+}
+
+function normalizeSeed(seed: HashSeed | undefined): bigint {
+  if (typeof seed === "bigint") {
+    return seed
+  }
+
+  if (typeof seed === "number" && Number.isFinite(seed)) {
+    return BigInt(Math.trunc(seed))
+  }
+
+  return 0n
+}
+
+function hash64(input: HashInput, seed?: HashSeed, salt = 0n): bigint {
+  const bytes = normalizeHashInput(input)
+  let value = BigInt.asUintN(64, FNV64_OFFSET_BASIS ^ normalizeSeed(seed) ^ salt)
+
+  for (const byte of bytes) {
+    value ^= BigInt(byte)
+    value = BigInt.asUintN(64, value * FNV64_PRIME)
+  }
+
+  return value
+}
+
+function hash32(input: HashInput, seed?: HashSeed, salt = 0): number {
+  const bytes = normalizeHashInput(input)
+  let value = (FNV32_OFFSET_BASIS ^ Number(BigInt.asUintN(32, normalizeSeed(seed))) ^ salt) >>> 0
+
+  for (const byte of bytes) {
+    value ^= byte
+    value = Math.imul(value, FNV32_PRIME) >>> 0
+  }
+
+  return value >>> 0
+}
+
+const hash = ((input: HashInput, seed?: HashSeed) => hash64(input, seed)) as BunHash
+
+hash.wyhash = (input, seed) => hash64(input, seed)
+hash.rapidhash = (input, seed) => hash64(input, seed, 0x71374491428a2f98n)
+hash.cityHash64 = (input, seed) => hash64(input, seed, 0xa4093822299f31d0n)
+hash.xxHash64 = (input, seed) => hash64(input, seed, 0x243f6a8885a308d3n)
+hash.xxHash3 = (input, seed) => hash64(input, seed, 0x13198a2e03707344n)
+hash.murmur64v2 = (input, seed) => hash64(input, seed, 0x082efa98ec4e6c89n)
+
+hash.crc32 = (input, seed) => hash32(input, seed)
+hash.adler32 = (input, seed) => hash32(input, seed, 0x9e3779b9)
+hash.cityHash32 = (input, seed) => hash32(input, seed, 0x85ebca6b)
+hash.xxHash32 = (input, seed) => hash32(input, seed, 0xc2b2ae35)
+hash.murmur32v2 = (input, seed) => hash32(input, seed, 0x27d4eb2d)
+hash.murmur32v3 = (input, seed) => hash32(input, seed, 0x165667b1)
+
 export function which(cmd: string): string | null {
   return resolveCommand(cmd)
 }
@@ -57,6 +154,7 @@ const BunShim = {
     text: stdinText,
   },
   which,
+  hash,
   stringWidth,
   stripANSI,
   $: unsupportedTemplateTag,
@@ -82,13 +180,18 @@ if (typeof globalThis.Bun === "undefined") {
     writable: true,
     configurable: true,
   })
+} else if (
+  (typeof globalThis.Bun === "object" && globalThis.Bun !== null) ||
+  typeof globalThis.Bun === "function"
+) {
+  Object.assign(globalThis.Bun, BunShim)
 }
 
 ensureGlobalBunBinding()
 
 export const serve = unsupportedServe
 export const stdin = BunShim.stdin
-export { stringWidth, stripANSI }
+export { hash, stringWidth, stripANSI }
 export const $ = unsupportedTemplateTag
 export const version = BunShim.version
 
