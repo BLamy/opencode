@@ -40,6 +40,13 @@ export function createOpencodeClient(opts: {
       command: (data: any) => request("POST", `/session/${data.sessionID}/command`, data),
       share: (data: any) => request("POST", `/session/${data.sessionID}/share`),
       delete: (id: string) => request("DELETE", `/session/${id}`),
+      messages: (data: { path: { id: string } }) =>
+        request("GET", `/session/${data.path.id}/message`),
+    },
+    tui: {
+      appendPrompt: (data: { body: { text: string } }) =>
+        request("POST", "/tui/append-prompt", data.body),
+      submitPrompt: () => request("POST", "/tui/submit-prompt", {}),
     },
     config: {
       get: () => request("GET", "/config"),
