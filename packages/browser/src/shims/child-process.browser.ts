@@ -29,6 +29,79 @@ export interface BrowserProcessBridge {
 let processBridge: BrowserProcessBridge | null = null
 const scopedProcessBridge = new AsyncLocalStorage<BrowserProcessBridge>()
 
+/**
+ * Per-root process bridges, mirroring fs.browser's workspace registry: the
+ * exec cwd lives under a sandbox-unique namespace root, so prefix matching
+ * on cwd routes the command to the right container even when requests from
+ * several sandboxes are in flight at once (the AsyncLocalStorage shim is a
+ * plain stack and returns the most recently entered scope, not the
+ * caller's).
+ */
+const processBridgesByRoot = new Map<string, BrowserProcessBridge[]>()
+
+export function registerProcessBridgeForRoot(
+  root: string,
+  bridge: BrowserProcessBridge,
+): void {
+  const normalizedRoot = normalizeRootPath(root)
+  const stack = processBridgesByRoot.get(normalizedRoot)
+  if (stack) {
+    stack.push(bridge)
+  } else {
+    processBridgesByRoot.set(normalizedRoot, [bridge])
+  }
+}
+
+/**
+ * Removes exactly this bridge's registration (stack semantics, matching
+ * fs.browser): a transient client's dispose never tears down the mounted
+ * TUI's registration for the same root, and vice versa.
+ */
+export function unregisterProcessBridgeForRoot(
+  root: string,
+  bridge: BrowserProcessBridge,
+): void {
+  const normalizedRoot = normalizeRootPath(root)
+  const stack = processBridgesByRoot.get(normalizedRoot)
+  if (!stack) return
+  const index = stack.lastIndexOf(bridge)
+  if (index >= 0) {
+    stack.splice(index, 1)
+  }
+  if (stack.length === 0) {
+    processBridgesByRoot.delete(normalizedRoot)
+  }
+}
+
+function normalizeRootPath(p: string): string {
+  const parts = p.split("/").filter(Boolean)
+  const resolved: string[] = []
+  for (const part of parts) {
+    if (part === "..") resolved.pop()
+    else if (part !== ".") resolved.push(part)
+  }
+  return "/" + resolved.join("/")
+}
+
+function resolveProcessBridgeByCwd(
+  cwd: string | undefined,
+): BrowserProcessBridge | null {
+  if (!cwd) return null
+  let best: BrowserProcessBridge | null = null
+  let bestLength = -1
+  for (const [root, stack] of processBridgesByRoot) {
+    if (
+      stack.length > 0 &&
+      (cwd === root || cwd.startsWith(`${root}/`)) &&
+      root.length > bestLength
+    ) {
+      best = stack[stack.length - 1]
+      bestLength = root.length
+    }
+  }
+  return best
+}
+
 export function attachProcessBridge(bridge: BrowserProcessBridge): void {
   processBridge = bridge
 }
@@ -164,7 +237,10 @@ async function executeCommand(
     return runRipgrep(args, cwd)
   }
 
-  const bridge = scopedProcessBridge.getStore() ?? processBridge
+  const bridge =
+    resolveProcessBridgeByCwd(cwd) ??
+    scopedProcessBridge.getStore() ??
+    processBridge
   if (bridge) {
     return bridge.exec({
       command,

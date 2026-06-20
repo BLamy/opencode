@@ -32,7 +32,13 @@ export function createOpencodeClient(opts: {
 
   return {
     session: {
-      list: () => request("GET", "/session"),
+      list: (query?: { directory?: string }) =>
+        request(
+          "GET",
+          query?.directory
+            ? `/session?directory=${encodeURIComponent(query.directory)}`
+            : "/session",
+        ),
       create: (data: any) => request("POST", "/session", data),
       get: (id: string) => request("GET", `/session/${id}`),
       fork: (data: any) => request("POST", `/session/${data.sessionID}/fork`),

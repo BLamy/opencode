@@ -49,21 +49,28 @@ export interface BrowserWorkspaceBridge {
 }
 
 export function getWorkspaceRoot(): string {
-  return primaryWorkspaceRoot
+  return scopedWorkspaceScope.getStore()?.root ?? primaryWorkspaceRoot
 }
 
 export function getWorkspaceRoots(): string[] {
+  const scoped = scopedWorkspaceScope.getStore()
+  if (scoped?.aliases) {
+    return Array.from(scoped.aliases)
+  }
   return Array.from(workspaceRootAliases)
 }
 
 export function setWorkspaceRoot(path: string, aliases: string[] = []): void {
   const normalizedRoot = normalizePath(path)
   primaryWorkspaceRoot = normalizedRoot
-  workspaceRootAliases = new Set<string>([
-    DEFAULT_WORKSPACE_ROOT,
-    normalizedRoot,
-    ...aliases.map((value) => normalizePath(value)),
-  ])
+  // Aliases accumulate: with several almostnode sandboxes mounted against
+  // this module's globals, a background sandbox's root must stay recognized
+  // after another sandbox calls setWorkspaceRoot for its own directory.
+  workspaceRootAliases.add(DEFAULT_WORKSPACE_ROOT)
+  workspaceRootAliases.add(normalizedRoot)
+  for (const value of aliases) {
+    workspaceRootAliases.add(normalizePath(value))
+  }
 
   for (const root of workspaceRootAliases) {
     _dirs.add(root)
@@ -71,7 +78,86 @@ export function setWorkspaceRoot(path: string, aliases: string[] = []): void {
 }
 
 let workspaceBridge: BrowserWorkspaceBridge | null = null
-const scopedWorkspaceBridge = new AsyncLocalStorage<BrowserWorkspaceBridge>()
+
+/**
+ * Per-root workspace bridges: `/sandboxes/{id}` (or `/repos/{id}`) → the
+ * bridge for that sandbox's container. Resolution is by longest path prefix
+ * of the file being accessed, so it is immune to interleaved async scopes —
+ * the AsyncLocalStorage shim below is a plain stack whose `getStore()`
+ * returns the most recently entered scope, which is the WRONG bridge when
+ * two sandboxes' requests are in flight at once. Paths are namespaced per
+ * sandbox, so the path itself is the only trustworthy routing key.
+ */
+const workspaceBridgesByRoot = new Map<string, BrowserWorkspaceBridge[]>()
+
+export function registerWorkspaceBridgeForRoot(
+  root: string,
+  bridge: BrowserWorkspaceBridge,
+): void {
+  const normalizedRoot = normalizePath(root)
+  const stack = workspaceBridgesByRoot.get(normalizedRoot)
+  if (stack) {
+    stack.push(bridge)
+  } else {
+    workspaceBridgesByRoot.set(normalizedRoot, [bridge])
+  }
+  workspaceRootAliases.add(normalizedRoot)
+  _dirs.add(normalizedRoot)
+}
+
+/**
+ * Removes exactly this bridge's registration for the root. Each root keeps
+ * a stack of registrations (a transient client can coexist with a mounted
+ * TUI for the same sandbox), and the newest live registration wins, so an
+ * older handle's dispose never tears down a newer one.
+ */
+export function unregisterWorkspaceBridgeForRoot(
+  root: string,
+  bridge: BrowserWorkspaceBridge,
+): void {
+  const normalizedRoot = normalizePath(root)
+  const stack = workspaceBridgesByRoot.get(normalizedRoot)
+  if (!stack) return
+  const index = stack.lastIndexOf(bridge)
+  if (index >= 0) {
+    stack.splice(index, 1)
+  }
+  if (stack.length === 0) {
+    workspaceBridgesByRoot.delete(normalizedRoot)
+  }
+}
+
+function resolveWorkspaceBridgeByPath(
+  path: string,
+): BrowserWorkspaceBridge | null {
+  let best: BrowserWorkspaceBridge | null = null
+  let bestLength = -1
+  for (const [root, stack] of workspaceBridgesByRoot) {
+    if (
+      stack.length > 0 &&
+      (path === root || path.startsWith(`${root}/`)) &&
+      root.length > bestLength
+    ) {
+      best = stack[stack.length - 1]
+      bestLength = root.length
+    }
+  }
+  return best
+}
+
+/**
+ * Request-scoped workspace state: the bridge plus (optionally) the workspace
+ * root the request operates on. Scoping the root with the bridge keeps
+ * interleaved requests from two sandboxes from crossing VFSes; when a scope
+ * carries no root info the module-level globals stay authoritative.
+ */
+interface WorkspaceScope {
+  bridge: BrowserWorkspaceBridge
+  root: string | null
+  aliases: Set<string> | null
+}
+
+const scopedWorkspaceScope = new AsyncLocalStorage<WorkspaceScope>()
 
 export function attachWorkspaceBridge(bridge: BrowserWorkspaceBridge): void {
   workspaceBridge = bridge
@@ -87,15 +173,30 @@ export function detachWorkspaceBridge(): void {
 export function withWorkspaceBridgeScope<T>(
   bridge: BrowserWorkspaceBridge | null | undefined,
   fn: () => T,
+  scope?: { root?: string; aliases?: string[] },
 ): T {
   if (!bridge) {
     return fn()
   }
 
-  for (const root of workspaceRootAliases) {
-    _dirs.add(root)
+  let root: string | null = null
+  let aliases: Set<string> | null = null
+  if (scope?.root) {
+    root = normalizePath(scope.root)
+    aliases = new Set<string>([
+      DEFAULT_WORKSPACE_ROOT,
+      root,
+      ...(scope.aliases ?? []).map((value) => normalizePath(value)),
+    ])
+    for (const alias of aliases) {
+      _dirs.add(alias)
+    }
   }
-  return scopedWorkspaceBridge.run(bridge, fn)
+
+  for (const dir of workspaceRootAliases) {
+    _dirs.add(dir)
+  }
+  return scopedWorkspaceScope.run({ bridge, root, aliases }, fn)
 }
 
 function normalizePath(p: string): string {
@@ -118,7 +219,10 @@ function ensureParentDirs(filePath: string) {
 }
 
 function isWorkspacePath(path: string): boolean {
-  return Array.from(workspaceRootAliases).some((root) => (
+  // Scoped roots win when the active scope carries them; the module globals
+  // remain the fallback for legacy callers that only scope the bridge.
+  const roots = scopedWorkspaceScope.getStore()?.aliases ?? workspaceRootAliases
+  return Array.from(roots).some((root) => (
     path === root || path.startsWith(`${root}/`)
   ))
 }
@@ -128,7 +232,13 @@ function isBridgedPath(path: string): boolean {
 }
 
 function getWorkspaceBridge(path: string): BrowserWorkspaceBridge | null {
-  const bridge = scopedWorkspaceBridge.getStore() ?? workspaceBridge
+  // Registered per-root bridges win: the path's own namespace prefix is the
+  // only routing key that stays correct under interleaved requests from
+  // multiple sandboxes. The ambient scope/global remains the fallback for
+  // un-namespaced paths (e.g. /opencode/* internals).
+  const registered = resolveWorkspaceBridgeByPath(path)
+  if (registered) return registered
+  const bridge = scopedWorkspaceScope.getStore()?.bridge ?? workspaceBridge
   if (!bridge) return null
   return isWorkspacePath(path) || isBridgedPath(path) ? bridge : null
 }
@@ -141,13 +251,18 @@ function createDirent(name: string, type: "file" | "directory"): BrowserWorkspac
   }
 }
 
-function createStats(type: "file" | "directory", size: number): BrowserWorkspaceStats {
+// Stable mtimes per internal file. FileTime.assert compares stat mtimes
+// between read and write — fabricating `new Date()` on every stat call made
+// every overwrite fail with "file has been modified since it was last read".
+const _mtimes = new Map<string, number>()
+
+function createStats(type: "file" | "directory", size: number, mtimeMs: number): BrowserWorkspaceStats {
   return {
     isFile: () => type === "file",
     isDirectory: () => type === "directory",
     size,
-    mtime: new Date(),
-    mtimeMs: Date.now(),
+    mtime: new Date(mtimeMs),
+    mtimeMs,
   }
 }
 
@@ -191,11 +306,11 @@ function internalExists(path: string): boolean {
 function internalStat(path: string): BrowserWorkspaceStats | undefined {
   const content = _files.get(path)
   if (content !== undefined) {
-    return createStats("file", new TextEncoder().encode(content).length)
+    return createStats("file", new TextEncoder().encode(content).length, _mtimes.get(path) ?? 0)
   }
 
   if (_dirs.has(path)) {
-    return createStats("directory", 0)
+    return createStats("directory", 0, 0)
   }
 
   return undefined
@@ -247,6 +362,7 @@ export async function writeFile(path: string, data: string | Uint8Array, _opts?:
 
   ensureParentDirs(normalized)
   _files.set(normalized, content)
+  _mtimes.set(normalized, Date.now())
 }
 
 export async function appendFile(path: string, data: string | Uint8Array, _opts?: any): Promise<void> {
@@ -319,6 +435,7 @@ export async function unlink(path: string): Promise<void> {
   }
 
   _files.delete(normalized)
+  _mtimes.delete(normalized)
 }
 
 export async function rm(path: string, opts?: any): Promise<void> {
@@ -330,9 +447,13 @@ export async function rm(path: string, opts?: any): Promise<void> {
   }
 
   _files.delete(normalized)
+  _mtimes.delete(normalized)
   if (opts?.recursive) {
     for (const key of Array.from(_files.keys())) {
-      if (key.startsWith(`${normalized}/`)) _files.delete(key)
+      if (key.startsWith(`${normalized}/`)) {
+        _files.delete(key)
+        _mtimes.delete(key)
+      }
     }
     for (const dir of Array.from(_dirs.values())) {
       if (dir === normalized || dir.startsWith(`${normalized}/`)) _dirs.delete(dir)
@@ -353,7 +474,9 @@ export async function rename(oldPath: string, newPath: string): Promise<void> {
   if (content !== undefined) {
     ensureParentDirs(newNorm)
     _files.set(newNorm, content)
+    _mtimes.set(newNorm, Date.now())
     _files.delete(oldNorm)
+    _mtimes.delete(oldNorm)
   }
 }
 
@@ -392,6 +515,7 @@ export function _vfs_setFile(path: string, content: string) {
 
   ensureParentDirs(normalized)
   _files.set(normalized, content)
+  _mtimes.set(normalized, Date.now())
 }
 
 export function _vfs_getFile(path: string): string | undefined {
@@ -403,9 +527,10 @@ export function _vfs_getFile(path: string): string | undefined {
 export function _vfs_listAll(): Map<string, string> {
   const result = new Map(_files)
 
-  const bridge = scopedWorkspaceBridge.getStore() ?? workspaceBridge
+  const scoped = scopedWorkspaceScope.getStore()
+  const bridge = scoped?.bridge ?? workspaceBridge
   if (bridge) {
-    const files = bridge.listFiles?.(primaryWorkspaceRoot) ?? []
+    const files = bridge.listFiles?.(scoped?.root ?? primaryWorkspaceRoot) ?? []
     for (const path of files) {
       const normalized = normalizePath(path)
       const content = bridge.readFile(normalized)
@@ -438,9 +563,13 @@ export function _vfs_remove(path: string, opts?: { recursive?: boolean }) {
   }
 
   _files.delete(normalized)
+  _mtimes.delete(normalized)
   if (opts?.recursive) {
     for (const key of Array.from(_files.keys())) {
-      if (key.startsWith(`${normalized}/`)) _files.delete(key)
+      if (key.startsWith(`${normalized}/`)) {
+        _files.delete(key)
+        _mtimes.delete(key)
+      }
     }
     for (const dir of Array.from(_dirs.values())) {
       if (dir === normalized || dir.startsWith(`${normalized}/`)) _dirs.delete(dir)
@@ -455,10 +584,13 @@ export function _vfs_exists(path: string): boolean {
 }
 
 export function _vfs_isDir(path: string): boolean {
+  return Boolean(_vfs_stat(path)?.isDirectory())
+}
+
+export function _vfs_stat(path: string): BrowserWorkspaceStats | undefined {
   const normalized = normalizePath(path)
   const bridge = getWorkspaceBridge(normalized)
-  const value = bridge ? bridge.stat(normalized) : internalStat(normalized)
-  return Boolean(value?.isDirectory())
+  return bridge ? bridge.stat(normalized) : internalStat(normalized)
 }
 
 export function _vfs_readdir(path: string): BrowserWorkspaceDirent[] {
@@ -498,5 +630,6 @@ export default {
   _vfs_remove,
   _vfs_exists,
   _vfs_isDir,
+  _vfs_stat,
   _vfs_readdir,
 }

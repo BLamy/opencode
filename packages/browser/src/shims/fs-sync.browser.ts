@@ -10,6 +10,7 @@ import {
   _vfs_readdir,
   _vfs_remove,
   _vfs_setFile,
+  _vfs_stat,
   type BrowserWorkspaceDirent,
 } from "./fs.browser"
 
@@ -57,30 +58,15 @@ export function readdirSync(path: string, opts?: any): any[] {
 }
 
 export function statSync(path: string, opts?: any): any {
-  if (!_vfs_exists(path)) {
+  // Delegate to the bridge-aware stat so mtimes are real and stable —
+  // FileTime.assert compares stat mtimes between read and write, so
+  // fabricating fresh timestamps here made every overwrite fail.
+  const stats = _vfs_stat(normalizePath(path))
+  if (!stats) {
     if (opts?.throwIfNoEntry === false) return undefined
     throw enoent("stat", path)
   }
-
-  const normalized = normalizePath(path)
-  if (_vfs_isDir(normalized)) {
-    return {
-      isFile: () => false,
-      isDirectory: () => true,
-      size: 0,
-      mtime: new Date(),
-      mtimeMs: Date.now(),
-    }
-  }
-
-  const content = _vfs_getFile(normalized) ?? ""
-  return {
-    isFile: () => true,
-    isDirectory: () => false,
-    size: new TextEncoder().encode(content).length,
-    mtime: new Date(),
-    mtimeMs: Date.now(),
-  }
+  return stats
 }
 
 export const lstatSync = statSync

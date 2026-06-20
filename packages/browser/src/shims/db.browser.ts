@@ -216,6 +216,13 @@ export async function persistDB(): Promise<void> {
   await saveToIDB(data)
 }
 
+/** Whether a (live or persisted) browser DB already exists. */
+export async function hasPersistedBrowserDB(): Promise<boolean> {
+  if (_db) return true
+  const saved = await loadFromIDB()
+  return saved !== null && saved.length > 0
+}
+
 export async function exportBrowserDBSnapshot(): Promise<Uint8Array | null> {
   if (_db) {
     return new Uint8Array(_db.export())
