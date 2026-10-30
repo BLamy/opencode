@@ -12,12 +12,14 @@ import { readFile, stat, writeFile } from "./fs.browser"
 // browserify's Buffer predates Node's base64url encoding, used by v2 cursors
 // and OAuth claims. Normalize that encoding while retaining the real codec.
 if (!Buffer.isEncoding("base64url")) {
-  const from = Buffer.from
+  // SAFETY: Buffer.from validates each overload at runtime. The bridge only
+  // normalizes the encoding label and forwards every other argument unchanged.
+  const from = Buffer.from as (...args: unknown[]) => Buffer
   const toString = Buffer.prototype.toString
   const byteLength = Buffer.byteLength
   const isEncoding = Buffer.isEncoding
   Object.assign(Buffer, {
-    from: (...args: Parameters<typeof Buffer.from>) => {
+    from: (...args: unknown[]) => {
       if (args[1] === "base64url") {
         args[1] = "base64"
         if (typeof args[0] === "string") args[0] = args[0].replaceAll("-", "+").replaceAll("_", "/")
