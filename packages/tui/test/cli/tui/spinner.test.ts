@@ -6,7 +6,6 @@ test("spinner renders Unicode frames with the renderer's OpenTUI 0.8 resource ow
   const app = await createTestRenderer({ width: 20, height: 3 })
   try {
     const spinner = new SpinnerRenderable(app.renderer, {
-      id: "spinner",
       frames: ["A👋", "中"],
       autoplay: false,
     })
@@ -31,7 +30,6 @@ test("spinner starts, advances, and stops", async () => {
   const app = await createTestRenderer({ width: 20, height: 3 })
   try {
     const spinner = new SpinnerRenderable(app.renderer, {
-      id: "spinner",
       frames: ["first", "second"],
       interval: 100,
       autoplay: false,
