@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenCode opaque iframe verification</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0d1117;
+        color: #c9d1d9;
+        font: 14px monospace;
+      }
+      h1,
+      p {
+        margin: 16px;
+      }
+      iframe {
+        width: calc(100% - 32px);
+        height: 640px;
+        border: 1px solid #30363d;
+        margin: 0 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OpenCode opaque iframe verification</h1>
+    <p id="result" role="status">Starting the real TUI in an allow-scripts sandbox…</p>
+    <iframe title="Opaque OpenCode terminal" sandbox="allow-scripts" src="./?embed"></iframe>
+    <script type="module" src="/src/embed.smoke.ts"></script>
+  </body>
+</html>

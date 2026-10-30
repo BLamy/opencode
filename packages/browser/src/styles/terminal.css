@@ -37,6 +37,12 @@ body {
 #session-info {
   color: #8b949e;
 }
+#storage-status {
+  padding: 6px 12px;
+  border-bottom: 1px solid #30363d;
+  font-size: 11px;
+  color: #d2a870;
+}
 #terminal-container {
   flex: 1;
   min-height: 0;

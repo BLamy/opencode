@@ -3,15 +3,6 @@ name: Browser and GitHub Pages
 on:
   push:
     branches: [dev]
-    paths:
-      - "packages/browser/**"
-      - "packages/core/**"
-      - "packages/opencode/**"
-      - "packages/server/**"
-      - "packages/tui/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/browser-pages.yml"
   pull_request:
     branches: [dev]
   workflow_dispatch:

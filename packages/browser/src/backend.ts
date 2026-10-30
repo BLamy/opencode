@@ -10,12 +10,13 @@ import { EffectDrizzleSqlite } from "@opencode-ai/effect-drizzle-sqlite"
 import { Effect, FileSystem, Layer, Logger, Path, References } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
-import { backupBrowserDBBeforeUpgrade, initBrowserDB, persistDB } from "./shims/db.browser"
+import { backupBrowserDBBeforeUpgrade, getBrowserDBStorage, initBrowserDB, persistDB } from "./shims/db.browser"
 import { NodeChildProcessSpawner, NodeFileSystem } from "./shims/effect-platform-node.browser"
 import { BrowserSqlite } from "./sqlite"
 import { BrowserLegacyDatabase } from "./legacy-database"
 import { HttpApiApp } from "../../opencode/src/server/routes/instance/httpapi/server"
 import { PluginServerTransport } from "../../opencode/src/plugin/server-transport"
+import type { BrowserStorage } from "./storage"
 
 export interface BrowserBackendOptions {
   readonly database?: BrowserSqlite.Database
@@ -55,10 +56,13 @@ export class BrowserDatabaseUpgradeError extends Error {
 export async function createBrowserBackend(options: BrowserBackendOptions = {}) {
   options.onStage?.("Opening WASM SQLite")
   const database = options.database ?? (await initBrowserDB())
+  const storage: BrowserStorage = options.persist ? "persistent" : options.database ? "memory" : getBrowserDBStorage()
   options.onStage?.("Snapshotting SQLite before migration")
   const originalSnapshot = await Effect.runPromise(BrowserSqlite.snapshot(database))
-  const persist = options.persist ?? (options.database ? undefined : persistDB)
-  const backup = options.backup ?? (options.database ? undefined : backupBrowserDBBeforeUpgrade)
+  const persist = storage === "memory" ? undefined : (options.persist ?? persistDB)
+  const backup =
+    options.backup ??
+    (options.database || getBrowserDBStorage() === "memory" ? undefined : backupBrowserDBBeforeUpgrade)
   let legacyUpgrade = false
   let disposed = false
   // Both the UI and plugin callbacks use this same handler. The closure is
@@ -151,12 +155,13 @@ export async function createBrowserBackend(options: BrowserBackendOptions = {}) 
 
   return {
     fetch,
+    storage,
     async dispose() {
       if (disposed) return
       disposed = true
       if (timer !== undefined) clearInterval(timer)
       await web.dispose()
-      await save()
+      if (persist) await save()
     },
   }
 }

@@ -2,11 +2,13 @@
 import type { Database as SqlJsDatabase, SqlJsStatic } from "sql.js"
 import sqlJsLoaderUrl from "sql.js/dist/sql-wasm.js?url"
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url"
+import { assertPersistentBrowserStorage, loadBrowserStorage, type BrowserStorage } from "../storage"
 
 let _db: SqlJsDatabase | null = null
 let _SQL: SqlJsStatic | null = null
 let _loaderPromise: Promise<InitSqlJs> | null = null
 let _dbPromise: Promise<SqlJsDatabase> | null = null
+let _storage: BrowserStorage | undefined
 
 const IDB_KEY = "opencode-db-v2"
 const IDB_STORE = "opencode"
@@ -91,6 +93,7 @@ function loadSqlJs(): Promise<InitSqlJs> {
 
 function openIDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    assertPersistentBrowserStorage(globalThis.origin, _storage)
     const request = indexedDB.open(IDB_DB, 1)
     request.onupgradeneeded = () => {
       request.result.createObjectStore(IDB_STORE)
@@ -191,9 +194,10 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
       }
     }
 
-    const saved = await loadFromIDB()
+    const { storage, saved } = await loadBrowserStorage(globalThis.origin, loadFromIDB)
     if (!saved) {
       _db = new _SQL.Database()
+      _storage = storage
       return _db
     }
 
@@ -213,6 +217,7 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
       )
     }
 
+    _storage = storage
     return _db!
   })()
 
@@ -229,7 +234,14 @@ export function getBrowserDB(): SqlJsDatabase {
   return _db
 }
 
+/** The storage mode selected by successful database initialization. */
+export function getBrowserDBStorage(): BrowserStorage {
+  if (!_db || !_storage) throw new Error("Browser DB not initialized. Call initBrowserDB() first.")
+  return _storage
+}
+
 export async function persistDB(snapshot?: Uint8Array): Promise<void> {
+  assertPersistentBrowserStorage(globalThis.origin, _storage)
   if (!_db) return
   const data = snapshot ?? _db.export()
   await saveToIDB(data)
@@ -237,8 +249,9 @@ export async function persistDB(snapshot?: Uint8Array): Promise<void> {
 
 /** Whether a (live or persisted) browser DB already exists. */
 export async function hasPersistedBrowserDB(): Promise<boolean> {
+  if (globalThis.origin === "null" || _storage === "memory") return false
   if (_db) return true
-  const saved = await loadFromIDB()
+  const { saved } = await loadBrowserStorage(globalThis.origin, loadFromIDB)
   return saved !== null && saved.length > 0
 }
 
@@ -247,15 +260,18 @@ export async function exportBrowserDBSnapshot(): Promise<Uint8Array | null> {
     return new Uint8Array(_db.export())
   }
 
-  const saved = await loadFromIDB()
+  if (globalThis.origin === "null" || _storage === "memory") return null
+  const { saved } = await loadBrowserStorage(globalThis.origin, loadFromIDB)
   return saved ? new Uint8Array(saved) : null
 }
 
 export async function importBrowserDBSnapshot(data: Uint8Array | null): Promise<void> {
+  assertPersistentBrowserStorage(globalThis.origin, _storage)
   closeBrowserDB()
 
   _db = null
   _dbPromise = null
+  _storage = undefined
 
   if (data && data.length > 0) {
     await saveToIDB(new Uint8Array(data))
@@ -267,9 +283,11 @@ export async function importBrowserDBSnapshot(data: Uint8Array | null): Promise<
 }
 
 export async function resetBrowserDB(): Promise<SqlJsDatabase> {
+  assertPersistentBrowserStorage(globalThis.origin, _storage)
   closeBrowserDB()
   _db = null
   _dbPromise = null
+  _storage = undefined
   await clearIDB()
   return initBrowserDB()
 }
@@ -277,7 +295,7 @@ export async function resetBrowserDB(): Promise<SqlJsDatabase> {
 // Auto-persist every 5 seconds
 let _persistInterval: ReturnType<typeof setInterval> | null = null
 export function startAutoPersist(intervalMs = 5000) {
-  if (_persistInterval) return
+  if (_persistInterval || globalThis.origin === "null" || _storage !== "persistent") return
   _persistInterval = setInterval(() => persistDB(), intervalMs)
 }
 

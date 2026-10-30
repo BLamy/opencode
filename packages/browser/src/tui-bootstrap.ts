@@ -51,6 +51,7 @@ export interface MountOpenCodeTuiOptions {
 }
 
 export interface OpenCodeTuiSession {
+  storage: "persistent" | "memory" | "remote"
   term: Terminal
   fitAddon: FitAddon
   renderer: CliRenderer
@@ -472,7 +473,12 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
         ),
       ),
     ).finally(dispose)
-    const session = {
+    const storage: OpenCodeTuiSession["storage"] =
+      "storage" in backend && (backend.storage === "persistent" || backend.storage === "memory")
+        ? backend.storage
+        : "remote"
+    const session: OpenCodeTuiSession & { host: BrowserTerminalHost } = {
+      storage,
       term,
       fitAddon,
       renderer,

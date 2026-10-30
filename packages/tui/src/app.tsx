@@ -170,30 +170,37 @@ function errorMessage(error: unknown) {
 
 export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
   const global = yield* Global.Service
-  const exit = { epilogue: undefined as string | undefined, reason: undefined as unknown }
+  const exit = {
+    epilogue: undefined as string | undefined,
+    summary: undefined as string | undefined,
+    reason: undefined as unknown,
+  }
   const result = yield* Effect.scoped(
     Effect.gen(function* () {
       const renderer = yield* Effect.acquireRelease(
         Effect.tryPromise({
           try: () =>
-            input.renderer ? Promise.resolve(input.renderer) : createCliRenderer({
-              externalOutputMode: "passthrough",
-              targetFps: 60,
-              gatherStats: false,
-              exitOnCtrlC: false,
-              useKittyKeyboard: {},
-              autoFocus: false,
-              openConsoleOnError: false,
-              useMouse: !Flag.OPENCODE_DISABLE_MOUSE && input.config.mouse,
-              consoleOptions: {
-                keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
-              },
-            }),
+            input.renderer
+              ? Promise.resolve(input.renderer)
+              : createCliRenderer({
+                  externalOutputMode: "passthrough",
+                  targetFps: 60,
+                  gatherStats: false,
+                  exitOnCtrlC: false,
+                  useKittyKeyboard: {},
+                  autoFocus: false,
+                  openConsoleOnError: false,
+                  useMouse: !Flag.OPENCODE_DISABLE_MOUSE && input.config.mouse,
+                  consoleOptions: {
+                    keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
+                  },
+                }),
           catch: (error) => (error instanceof Error ? error : new Error(String(error))),
         }),
         (renderer) =>
-          Effect.sync(() => {
+          Effect.promise(async () => {
             destroyRenderer(renderer)
+            await renderer.closed
           }),
       )
       win32DisableProcessedInput()
@@ -212,13 +219,16 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
         }),
       )
       yield* Effect.addFinalizer(() => Effect.sync(TuiAudio.dispose))
-      const shutdown = yield* Deferred.make<unknown>()
-      const onSighup = () => destroyRenderer(renderer)
+      const shutdown = yield* Deferred.make<string | undefined>()
+      const onSighup = () => {
+        exit.summary = exit.epilogue
+        destroyRenderer(renderer)
+      }
       yield* Effect.acquireRelease(
-        Effect.sync(() => process.on("SIGHUP", onSighup)),
+        Effect.sync(() => process.prependListener("SIGHUP", onSighup)),
         () => Effect.sync(() => process.off("SIGHUP", onSighup)),
       )
-      renderer.once("destroy", () => Deferred.doneUnsafe(shutdown, Effect.void))
+      renderer.once("destroy", () => Deferred.doneUnsafe(shutdown, Effect.succeed(exit.summary)))
       const pluginRuntime = createPluginRuntime()
 
       yield* Effect.tryPromise(async () => {
@@ -233,6 +243,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
               exit={(reason) => {
                 if (renderer.isDestroyed) return
                 exit.reason = reason
+                // Native scene teardown unmounts routes before publishing destroy.
+                exit.summary = exit.epilogue
                 destroyRenderer(renderer)
               }}
             >
@@ -337,8 +349,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
           )
         }, renderer)
       })
-      yield* Deferred.await(shutdown)
-      return { epilogue: exit.epilogue, reason: exit.reason }
+      const epilogue = yield* Deferred.await(shutdown)
+      return { epilogue, reason: exit.reason }
     }),
   )
   yield* Effect.sync(() => {

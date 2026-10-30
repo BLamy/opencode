@@ -311,10 +311,15 @@ export default defineConfig(async () => {
       commonjsOptions: { requireReturnsDefault: (id) => (id === shim("fs-sync") ? "preferred" : false) },
       rollupOptions: {
         input: process.env.BROWSER_QA
-          ? { index: path.join(__dirname, "index.html"), checks: path.join(__dirname, "backend-smoke.html") }
+          ? {
+              index: path.join(__dirname, "index.html"),
+              checks: path.join(__dirname, "backend-smoke.html"),
+              embed: path.join(__dirname, "embed-smoke.html"),
+            }
           : undefined,
       },
     },
     server: { port: 5199, fs: { allow: [root, opentui] } },
+    preview: { cors: true },
   }
 })

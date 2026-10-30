@@ -32,12 +32,15 @@ Each build fetches the real catalog from `https://models.opencode.ai/api.json` a
 <iframe
   src="https://blamy.github.io/opencode/?embed"
   title="OpenCode terminal"
+  sandbox="allow-scripts"
   style="width:100%;height:640px;border:0"
   allow="clipboard-read; clipboard-write"
 ></iframe>
 ```
 
-The `embed` query removes the host header. The renderer uses a single-threaded WASM runtime, so the frame does not require cross-origin isolation. The frame emits `{ type: "opencode:ready", version }` after mounting; hosts should validate `event.origin` before handling it.
+The `embed` query removes the host header. The renderer uses a single-threaded WASM runtime, so the frame does not require cross-origin isolation. A sandbox with only `allow-scripts` has an opaque origin and runs real SQLite in memory; a visible “Memory-only storage” notice explains that its sessions last until the frame closes. IndexedDB's `SecurityError` selects the same mode. Quota, corruption, and migration errors remain errors, and existing saved databases are preserved.
+
+The frame emits `{ type: "opencode:ready", version, storage }` after mounting. For an opaque frame, validate `event.source` against that iframe's `contentWindow`; its `event.origin` is `"null"`. For ordinary frames, also validate the expected origin. Top-level browsing retains IndexedDB persistence and the safe legacy upgrade path.
 
 For an AlmostNode host, import `mountOpenCodeTui` from `src/tui-bootstrap.ts`, pass a container plus its `workspaceBridge` and `processBridge`, and call `dispose()` when unmounting. Real SDK responses and streaming events stay within the page's embedded handler. An optional `server` option (or `?server=https://…`) can attach the same TUI to an existing compatible server.
 

@@ -18,9 +18,10 @@ mountOpenCodeTui({
   ...(url ? { server: { url: new URL(url).href } } : {}),
 })
   .then((session) => {
+    document.querySelector<HTMLElement>("#storage-status")!.hidden = session.storage !== "memory"
     status.textContent = url ? "Connected to " + new URL(url).host : "Running locally · WebAssembly"
     container.dataset.state = "ready"
-    window.parent.postMessage({ type: "opencode:ready", version: OPENCODE_VERSION }, "*")
+    window.parent.postMessage({ type: "opencode:ready", version: OPENCODE_VERSION, storage: session.storage }, "*")
     window.addEventListener("pagehide", session.dispose, { once: true })
     session.exited.catch(fail)
   })
