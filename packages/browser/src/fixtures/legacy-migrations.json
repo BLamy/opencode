@@ -1,0 +1,47 @@
+[
+  {
+    "name": "20260127222353_familiar_lady_ursula",
+    "hash": "x77ekk",
+    "sql": "CREATE TABLE `project` (\n\t`id` text PRIMARY KEY,\n\t`worktree` text NOT NULL,\n\t`vcs` text,\n\t`name` text,\n\t`icon_url` text,\n\t`icon_color` text,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\t`time_initialized` integer,\n\t`sandboxes` text NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `message` (\n\t`id` text PRIMARY KEY,\n\t`session_id` text NOT NULL,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\t`data` text NOT NULL,\n\tCONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE TABLE `part` (\n\t`id` text PRIMARY KEY,\n\t`message_id` text NOT NULL,\n\t`session_id` text NOT NULL,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\t`data` text NOT NULL,\n\tCONSTRAINT `fk_part_message_id_message_id_fk` FOREIGN KEY (`message_id`) REFERENCES `message`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE TABLE `permission` (\n\t`project_id` text PRIMARY KEY,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\t`data` text NOT NULL,\n\tCONSTRAINT `fk_permission_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE TABLE `session` (\n\t`id` text PRIMARY KEY,\n\t`project_id` text NOT NULL,\n\t`parent_id` text,\n\t`slug` text NOT NULL,\n\t`directory` text NOT NULL,\n\t`title` text NOT NULL,\n\t`version` text NOT NULL,\n\t`share_url` text,\n\t`summary_additions` integer,\n\t`summary_deletions` integer,\n\t`summary_files` integer,\n\t`summary_diffs` text,\n\t`revert` text,\n\t`permission` text,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\t`time_compacting` integer,\n\t`time_archived` integer,\n\tCONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE TABLE `todo` (\n\t`session_id` text NOT NULL,\n\t`content` text NOT NULL,\n\t`status` text NOT NULL,\n\t`priority` text NOT NULL,\n\t`position` integer NOT NULL,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\tCONSTRAINT `todo_pk` PRIMARY KEY(`session_id`, `position`),\n\tCONSTRAINT `fk_todo_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE TABLE `session_share` (\n\t`session_id` text PRIMARY KEY,\n\t`id` text NOT NULL,\n\t`secret` text NOT NULL,\n\t`url` text NOT NULL,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\tCONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n);\n--> statement-breakpoint\nCREATE INDEX `message_session_idx` ON `message` (`session_id`);--> statement-breakpoint\nCREATE INDEX `part_message_idx` ON `part` (`message_id`);--> statement-breakpoint\nCREATE INDEX `part_session_idx` ON `part` (`session_id`);--> statement-breakpoint\nCREATE INDEX `session_project_idx` ON `session` (`project_id`);--> statement-breakpoint\nCREATE INDEX `session_parent_idx` ON `session` (`parent_id`);--> statement-breakpoint\nCREATE INDEX `todo_session_idx` ON `todo` (`session_id`);"
+  },
+  {
+    "name": "20260211171708_add_project_commands",
+    "hash": "20xcey",
+    "sql": "ALTER TABLE `project` ADD `commands` text;"
+  },
+  {
+    "name": "20260213144116_wakeful_the_professor",
+    "hash": "-xeogsz",
+    "sql": "CREATE TABLE `control_account` (\n\t`email` text NOT NULL,\n\t`url` text NOT NULL,\n\t`access_token` text NOT NULL,\n\t`refresh_token` text NOT NULL,\n\t`token_expiry` integer,\n\t`active` integer NOT NULL,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL,\n\tCONSTRAINT `control_account_pk` PRIMARY KEY(`email`, `url`)\n);\n"
+  },
+  {
+    "name": "20260225215848_workspace",
+    "hash": "bbmq6x",
+    "sql": "CREATE TABLE `workspace` (\n\t`id` text PRIMARY KEY,\n\t`branch` text,\n\t`project_id` text NOT NULL,\n\t`config` text NOT NULL,\n\tCONSTRAINT `fk_workspace_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n);\n"
+  },
+  {
+    "name": "20260227213759_add_session_workspace_id",
+    "hash": "djdihn",
+    "sql": "ALTER TABLE `session` ADD `workspace_id` text;--> statement-breakpoint\nCREATE INDEX `session_workspace_idx` ON `session` (`workspace_id`);"
+  },
+  {
+    "name": "20260228203230_blue_harpoon",
+    "hash": "-lhwirp",
+    "sql": "CREATE TABLE `account` (\n\t`id` text PRIMARY KEY,\n\t`email` text NOT NULL,\n\t`url` text NOT NULL,\n\t`access_token` text NOT NULL,\n\t`refresh_token` text NOT NULL,\n\t`token_expiry` integer,\n\t`selected_org_id` text,\n\t`time_created` integer NOT NULL,\n\t`time_updated` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `account_state` (\n\t`id` integer PRIMARY KEY NOT NULL,\n\t`active_account_id` text,\n\tFOREIGN KEY (`active_account_id`) REFERENCES `account`(`id`) ON UPDATE no action ON DELETE set null\n);\n"
+  },
+  {
+    "name": "20260303231226_add_workspace_fields",
+    "hash": "guiu6t",
+    "sql": "ALTER TABLE `workspace` ADD `type` text NOT NULL;--> statement-breakpoint\nALTER TABLE `workspace` ADD `name` text;--> statement-breakpoint\nALTER TABLE `workspace` ADD `directory` text;--> statement-breakpoint\nALTER TABLE `workspace` ADD `extra` text;--> statement-breakpoint\nALTER TABLE `workspace` DROP COLUMN `config`;"
+  },
+  {
+    "name": "20260309230000_move_org_to_state",
+    "hash": "mnhv62",
+    "sql": "ALTER TABLE `account_state` ADD `active_org_id` text;--> statement-breakpoint\nUPDATE `account_state` SET `active_org_id` = (SELECT `selected_org_id` FROM `account` WHERE `account`.`id` = `account_state`.`active_account_id`);--> statement-breakpoint\nALTER TABLE `account` DROP COLUMN `selected_org_id`;\n"
+  },
+  {
+    "name": "20260312043431_session_message_cursor",
+    "hash": "doimf",
+    "sql": "DROP INDEX IF EXISTS `message_session_idx`;--> statement-breakpoint\nDROP INDEX IF EXISTS `part_message_idx`;--> statement-breakpoint\nCREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);--> statement-breakpoint\nCREATE INDEX `part_message_id_id_idx` ON `part` (`message_id`,`id`);"
+  }
+]

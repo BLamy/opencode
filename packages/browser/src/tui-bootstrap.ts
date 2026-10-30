@@ -6,27 +6,21 @@ import { Terminal } from "@xterm/xterm"
 import {
   createBrowserRenderer,
   loadBrowserRenderLib,
-  type BrowserRenderer,
   type BrowserTerminalHost,
   type BrowserTerminalKey,
 } from "@opentui/core/browser"
-import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
-import { TuiConfig } from "../../opencode/src/config/tui"
-import { tui } from "../../opencode/src/cli/cmd/tui/app"
-import type { EventSource } from "../../opencode/src/cli/cmd/tui/context/sdk"
-import type { Args } from "../../opencode/src/cli/cmd/tui/context/args"
-import { Instance } from "../../opencode/src/project/instance"
-import { initBrowserDB, startAutoPersist } from "./shims/db.browser"
-import {
-  withProcessBridgeScope,
-  type BrowserProcessBridge,
-} from "./shims/child-process.browser"
+import type { CliRenderer } from "@opentui/core"
+import type { Args } from "../../tui/src/context/args"
+import { withProcessBridgeScope, type BrowserProcessBridge } from "./shims/child-process.browser"
 import {
   withWorkspaceBridgeScope,
   getWorkspaceRoot,
+  setWorkspaceRoot,
+  registerWorkspaceBridgeForRoot,
+  unregisterWorkspaceBridgeForRoot,
   type BrowserWorkspaceBridge,
 } from "./shims/fs.browser"
-import { Server } from "../../opencode/src/server/server"
+import { registerProcessBridgeForRoot, unregisterProcessBridgeForRoot } from "./shims/child-process.browser"
 
 type ThemeMode = "dark" | "light"
 
@@ -46,18 +40,20 @@ export interface BrowserTuiEnvironment {
 
 export interface MountOpenCodeTuiOptions {
   container: HTMLElement
-  workspaceBridge: BrowserWorkspaceBridge
+  workspaceBridge?: BrowserWorkspaceBridge
   processBridge?: BrowserProcessBridge
   wasmUrl?: string | URL
   directory?: string
   args?: Args
   env?: BrowserTuiEnvironment
+  /** A real OpenCode server or embedded runtime supplied by the host. */
+  server?: { url: string; fetch?: typeof fetch; dispose?(): Promise<void> | void }
 }
 
 export interface OpenCodeTuiSession {
   term: Terminal
   fitAddon: FitAddon
-  renderer: BrowserRenderer
+  renderer: CliRenderer
   exited: Promise<void>
   dispose(): void
   setThemeMode(mode: ThemeMode): void
@@ -307,19 +303,14 @@ class XtermBrowserHost implements BrowserTerminalHost {
 }
 
 function withScopedBridges<T>(
-  workspaceBridge: BrowserWorkspaceBridge,
+  workspaceBridge: BrowserWorkspaceBridge | undefined,
   processBridge: BrowserProcessBridge | undefined,
   fn: () => T,
 ): T {
-  return withWorkspaceBridgeScope(workspaceBridge, () =>
-    withProcessBridgeScope(processBridge, fn),
-  )
+  return withWorkspaceBridgeScope(workspaceBridge, () => withProcessBridgeScope(processBridge, fn))
 }
 
-function scopeResponseBody(
-  response: Response,
-  runWithScope: <T>(fn: () => T) => T,
-): Response {
+function scopeResponseBody(response: Response, runWithScope: <T>(fn: () => T) => T): Response {
   if (!response.body) {
     return response
   }
@@ -347,182 +338,153 @@ function scopeResponseBody(
   })
 }
 
-function createInternalFetch(
-  workspaceBridge: BrowserWorkspaceBridge,
-  processBridge?: BrowserProcessBridge,
-): typeof fetch {
-  const runWithScope = <T>(fn: () => T) => withScopedBridges(workspaceBridge, processBridge, fn)
-
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init)
-    const response = await runWithScope(() => Server.Default().fetch(request))
-    return scopeResponseBody(response, runWithScope)
-  }) as typeof fetch
-}
-
-function createInternalEventSource(directory: string, fetchFn: typeof fetch): EventSource & { dispose(): void } {
-  let workspaceID: string | undefined
-  const listeners = new Set<(event: Event) => void>()
-  let controller = new AbortController()
-  let disposed = false
-
-  const run = () => {
-    controller.abort()
-    controller = new AbortController()
-    const signal = controller.signal
-    const sdk = createOpencodeClient({
-      baseUrl: "http://opencode.internal",
-      directory,
-      experimental_workspaceID: workspaceID,
-      fetch: fetchFn,
-      signal,
-    })
-
-    void (async () => {
-      while (!disposed && !signal.aborted) {
-        const response = await sdk.event.subscribe({}, { signal }).catch(() => undefined)
-        if (!response) {
-          if (!signal.aborted) {
-            await new Promise((resolve) => setTimeout(resolve, 250))
-          }
-          continue
-        }
-
-        try {
-          for await (const event of response.stream) {
-            if (signal.aborted || disposed) break
-            for (const listener of listeners) {
-              listener(event)
-            }
-          }
-        } catch {}
-
-        if (!signal.aborted && !disposed) {
-          await new Promise((resolve) => setTimeout(resolve, 250))
-        }
-      }
-    })()
-  }
-
-  run()
-
-  return {
-    on(handler) {
-      listeners.add(handler)
-      return () => listeners.delete(handler)
+function scopedFetch(
+  fetch: typeof globalThis.fetch,
+  workspace: BrowserWorkspaceBridge | undefined,
+  process: BrowserProcessBridge | undefined,
+): typeof globalThis.fetch {
+  const scope = <T>(fn: () => T) => withScopedBridges(workspace, process, fn)
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await scope(() => fetch(input, init))
+      return scopeResponseBody(response, scope)
     },
-    setWorkspace(nextWorkspaceID) {
-      workspaceID = nextWorkspaceID
-      run()
-    },
-    dispose() {
-      disposed = true
-      controller.abort()
-      listeners.clear()
-    },
-  }
+    { preconnect: fetch.preconnect?.bind(fetch) ?? (() => {}) },
+  )
 }
 
 export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promise<OpenCodeTuiSession> {
-  const debugSession = new URLSearchParams(window.location.search).has("debugsession")
-  const mountId = (window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ ?? 0) + 1
-  window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ = mountId
   const directory = options.directory ?? getWorkspaceRoot()
-
-  await initBrowserDB()
-  startAutoPersist()
-  await loadBrowserRenderLib(options.wasmUrl ? { wasmUrl: options.wasmUrl } : {})
-
-  const initialThemeMode = options.env?.themeMode ?? "dark"
-  const fitAddon = new FitAddon()
-  const term = new Terminal({
-    allowTransparency: true,
-    convertEol: false,
-    cursorBlink: true,
-    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-    fontSize: 13,
-    lineHeight: 1.18,
-    scrollback: 3000,
-    theme: getTerminalTheme(initialThemeMode),
-  })
-
-  term.loadAddon(fitAddon)
-  term.open(options.container)
-
-  const host = new XtermBrowserHost(term, fitAddon, options.container, options.env)
-  const applyThemeMode = (mode: ThemeMode) => {
-    term.options.theme = getTerminalTheme(mode)
-    options.container.dataset.almostnodeTheme = mode
-  }
-  host.onThemeModeChange((mode) => {
-    applyThemeMode(mode)
-  })
-  applyThemeMode(initialThemeMode)
-  host.fit()
-  term.focus()
-
-  const renderer = await createBrowserRenderer(host, {
-    useAlternateScreen: true,
-    autoFocus: true,
-    onDestroy: () => host.destroy(),
-  })
-
-  const fetchFn = createInternalFetch(options.workspaceBridge, options.processBridge)
-  const events = createInternalEventSource(directory, fetchFn)
-  const config = await withScopedBridges(options.workspaceBridge, options.processBridge, () =>
-    Instance.provide({
-      directory,
-      fn: () => TuiConfig.get(),
-    }),
-  )
-
+  const cleanups: (() => void)[] = []
   let disposed = false
-  let session:
-    | (OpenCodeTuiSession & { host: BrowserTerminalHost; disposed?: boolean; debugSession?: boolean })
-    | undefined
   const dispose = () => {
     if (disposed) return
     disposed = true
-    if (!debugSession && window.__OPENCODE_BROWSER_TUI__?.renderer === renderer) {
-      delete window.__OPENCODE_BROWSER_TUI__
+    for (const cleanup of cleanups.toReversed()) {
+      try {
+        cleanup()
+      } catch (error) {
+        console.error("[opencode-browser] cleanup failed", error)
+      }
     }
-    if (session) {
-      session.disposed = true
+    cleanups.length = 0
+  }
+  try {
+    setWorkspaceRoot(directory)
+    if (options.workspaceBridge) {
+      registerWorkspaceBridgeForRoot(directory, options.workspaceBridge)
+      cleanups.push(() => unregisterWorkspaceBridgeForRoot(directory, options.workspaceBridge!))
     }
-    events.dispose()
-    renderer.destroy()
-    host.destroy()
-    term.dispose()
-  }
+    if (options.processBridge) {
+      registerProcessBridgeForRoot(directory, options.processBridge)
+      cleanups.push(() => unregisterProcessBridgeForRoot(directory, options.processBridge!))
+    }
 
-  const exited = tui({
-    url: "http://opencode.internal",
-    directory,
-    fetch: fetchFn,
-    events,
-    args: options.args ?? {},
-    config,
-    renderer,
-  }).finally(() => {
-    dispose()
-  })
+    const base = new URL(import.meta.env.BASE_URL + "opentui/", window.location.origin)
+    await loadBrowserRenderLib({
+      wasm: options.wasmUrl ?? new URL("opentui.wasm", base),
+      assets: {
+        treeSitterWasm: new URL("tree-sitter.wasm", base).href,
+        treeSitterWorker: new URL("parser.worker.browser.js", base).href,
+        treeSitterAssetBase: base.href,
+      },
+    })
+    process.cwd = () => directory
 
-  session = {
-    term,
-    fitAddon,
-    renderer,
-    host,
-    exited,
-    dispose,
-    setThemeMode(mode) {
-      host.setThemeMode(mode)
-    },
-    debugSession,
-  }
-
-  if (window.__OPENCODE_BROWSER_TUI_MOUNT_ID__ === mountId) {
+    // The native FFI backend is selected during module evaluation. Load the
+    // production TUI only after installing the WebAssembly backend above.
+    const [{ run }, { TuiConfig }, { Global }, { Effect }, { createBrowserPlugins }] = await Promise.all([
+      import("../../tui/src/app"),
+      import("../../tui/src/config"),
+      import("@opencode-ai/core/global"),
+      import("effect"),
+      import("./plugins"),
+    ])
+    const backend =
+      options.server ??
+      (await withScopedBridges(options.workspaceBridge, options.processBridge, async () => {
+        const { createBrowserBackend } = await import("./backend")
+        return { ...(await createBrowserBackend()), url: "http://opencode.internal" }
+      }))
+    cleanups.push(() => {
+      void Promise.resolve(backend.dispose?.()).catch(console.error)
+    })
+    const fetch = scopedFetch(
+      backend.fetch ?? globalThis.fetch.bind(globalThis),
+      options.workspaceBridge,
+      options.processBridge,
+    )
+    const mode = options.env?.themeMode ?? "dark"
+    const fitAddon = new FitAddon()
+    const term = new Terminal({
+      allowTransparency: true,
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: 'ui-monospace, "SFMono-Regular", monospace',
+      fontSize: 13,
+      lineHeight: 1.18,
+      scrollback: 3000,
+      theme: getTerminalTheme(mode),
+    })
+    cleanups.push(() => term.dispose())
+    term.loadAddon(fitAddon)
+    term.open(options.container)
+    const host = new XtermBrowserHost(term, fitAddon, options.container, options.env)
+    cleanups.push(() => host.destroy())
+    host.onThemeModeChange((mode) => {
+      term.options.theme = getTerminalTheme(mode)
+      options.container.dataset.almostnodeTheme = mode
+    })
+    host.fit()
+    term.focus()
+    const renderer = await createBrowserRenderer(host, {
+      screenMode: "alternate-screen",
+      autoFocus: true,
+      openConsoleOnError: false,
+    })
+    cleanups.push(() => renderer.destroy())
+    cleanups.push(() => {
+      if (window.__OPENCODE_BROWSER_TUI__?.renderer === renderer) delete window.__OPENCODE_BROWSER_TUI__
+    })
+    const config = TuiConfig.resolve({ attention: { sound: false, notifications: false } }, { terminalSuspend: false })
+    const exited = Effect.runPromise(
+      run({
+        url: backend.url,
+        directory,
+        fetch,
+        args: options.args ?? {},
+        config,
+        renderer,
+        pluginHost: createBrowserPlugins(),
+      }).pipe(
+        Effect.provide(
+          Global.layerWith({
+            home: "/home/browser",
+            data: "/opencode/data",
+            cache: "/opencode/cache",
+            config: "/opencode/config",
+            state: "/opencode/state",
+            tmp: "/tmp",
+            bin: "/opencode/bin",
+            log: "/opencode/log",
+            repos: "/opencode/repos",
+          }),
+        ),
+      ),
+    ).finally(dispose)
+    const session = {
+      term,
+      fitAddon,
+      renderer,
+      host,
+      exited,
+      dispose,
+      setThemeMode: (mode: ThemeMode) => host.setThemeMode(mode),
+    }
     window.__OPENCODE_BROWSER_TUI__ = session
+    return session
+  } catch (error) {
+    dispose()
+    throw error
   }
-
-  return session
 }

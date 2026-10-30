@@ -1,25 +1,22 @@
 // Browser database initialization using sql.js (WASM SQLite)
-import type { Database as SqlJsDatabase } from "sql.js"
+import type { Database as SqlJsDatabase, SqlJsStatic } from "sql.js"
 import sqlJsLoaderUrl from "sql.js/dist/sql-wasm.js?url"
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url"
 
 let _db: SqlJsDatabase | null = null
-let _SQL: any = null
+let _SQL: SqlJsStatic | null = null
 let _loaderPromise: Promise<InitSqlJs> | null = null
 let _dbPromise: Promise<SqlJsDatabase> | null = null
 
 const IDB_KEY = "opencode-db-v2"
 const IDB_STORE = "opencode"
 const IDB_DB = "opencode-storage-v2"
+const IDB_UPGRADE_BACKUP_KEY = "opencode-db-v2-before-1.19.5"
 
-type InitSqlJs = (config?: { locateFile?: (file: string) => string }) => Promise<any>
-
-declare global {
-  var initSqlJs: InitSqlJs | undefined
-}
+type InitSqlJs = (config?: { locateFile?: (file: string) => string }) => Promise<SqlJsStatic>
 
 function getInitSqlJs(): InitSqlJs | undefined {
-  const candidate = globalThis.initSqlJs
+  const candidate = (globalThis as unknown as { initSqlJs?: InitSqlJs }).initSqlJs
   return typeof candidate === "function" ? candidate : undefined
 }
 
@@ -33,13 +30,7 @@ function getErrorText(error: unknown, depth = 0): string {
   }
 
   if (error instanceof Error) {
-    return [
-      error.message,
-      error.stack,
-      getErrorText(error.cause, depth + 1),
-    ]
-      .filter(Boolean)
-      .join("\n")
+    return [error.message, error.stack, getErrorText(error.cause, depth + 1)].filter(Boolean).join("\n")
   }
 
   if (typeof error === "object") {
@@ -109,12 +100,12 @@ function openIDB(): Promise<IDBDatabase> {
   })
 }
 
-async function loadFromIDB(): Promise<Uint8Array | null> {
+async function loadFromIDB(key = IDB_KEY): Promise<Uint8Array | null> {
   const db = await openIDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readonly")
     const store = tx.objectStore(IDB_STORE)
-    const request = store.get(IDB_KEY)
+    const request = store.get(key)
     request.onsuccess = () => resolve(request.result || null)
     request.onerror = () => reject(request.error)
     tx.oncomplete = () => db.close()
@@ -134,6 +125,33 @@ async function saveToIDB(data: Uint8Array): Promise<void> {
     tx.onerror = () => reject(tx.error)
   })
 }
+
+/** Keep the first pre-upgrade image even after the live database is persisted. */
+export async function backupBrowserDBBeforeUpgrade(data: Uint8Array): Promise<void> {
+  const db = await openIDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite")
+    const store = tx.objectStore(IDB_STORE)
+    const request = store.get(IDB_UPGRADE_BACKUP_KEY)
+    request.onsuccess = () => {
+      if (request.result === undefined) store.put(new Uint8Array(data), IDB_UPGRADE_BACKUP_KEY)
+    }
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+    tx.onabort = () => {
+      db.close()
+      reject(tx.error ?? new Error("Database backup was aborted"))
+    }
+  })
+}
+
+export const exportBrowserDBUpgradeBackup = () => loadFromIDB(IDB_UPGRADE_BACKUP_KEY)
 
 async function clearIDB(): Promise<void> {
   const db = await openIDB()
@@ -186,15 +204,16 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
         throw error
       }
 
-      console.warn(
-        "[opencode-browser] Failed to restore persisted database snapshot; clearing it and recreating an empty database.",
-        error,
+      throw Object.assign(
+        new Error(
+          "Your saved browser database could not be opened. Its stored data has been preserved. Download a database backup before attempting recovery.",
+          { cause: error },
+        ),
+        { code: "BROWSER_DATABASE_UPGRADE_REQUIRED", originalSnapshot: new Uint8Array(saved) },
       )
-      await clearIDB()
-      _db = new _SQL.Database()
     }
 
-    return _db
+    return _db!
   })()
 
   try {
@@ -210,9 +229,9 @@ export function getBrowserDB(): SqlJsDatabase {
   return _db
 }
 
-export async function persistDB(): Promise<void> {
+export async function persistDB(snapshot?: Uint8Array): Promise<void> {
   if (!_db) return
-  const data = _db.export()
+  const data = snapshot ?? _db.export()
   await saveToIDB(data)
 }
 

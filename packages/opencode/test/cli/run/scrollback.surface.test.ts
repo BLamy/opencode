@@ -46,11 +46,12 @@ function render(commits: ClaimedCommit[]) {
   return commits.map(renderCommit).join("")
 }
 
-function renderRows(commit: ClaimedCommit, width = 80) {
+function renderRows(commit: ClaimedCommit) {
   const raw = decoder.decode(commit.snapshot.getRealCharBytes(true))
-  return Array.from({ length: commit.snapshot.height }, (_, index) =>
-    raw.slice(index * width, (index + 1) * width).trimEnd(),
-  )
+  return raw
+    .split("\n")
+    .slice(0, commit.snapshot.height)
+    .map((row) => row.trimEnd())
 }
 
 function destroy(commits: ClaimedCommit[]) {
@@ -129,9 +130,10 @@ test("turn summary starts at the left edge", async () => {
 })
 
 test("theme swaps restyle active reasoning without resetting the stream", async () => {
-  const previousSyntax = SyntaxStyle.fromStyles({ default: { fg: "#123456" } })
-  const nextSyntax = SyntaxStyle.fromStyles({ default: { fg: "#abcdef" } })
   const released: RunTheme[] = []
+  const out = await setup({ onThemeRelease: (theme) => released.push(theme) })
+  const previousSyntax = SyntaxStyle.fromStyles({ default: { fg: "#123456" } }, out.renderer.nativeScene)
+  const nextSyntax = SyntaxStyle.fromStyles({ default: { fg: "#abcdef" } }, out.renderer.nativeScene)
   const previous = {
     ...RUN_THEME_FALLBACK,
     block: {
@@ -146,7 +148,8 @@ test("theme swaps restyle active reasoning without resetting the stream", async 
       subtleSyntax: nextSyntax,
     },
   }
-  const out = await setup({ theme: previous, onThemeRelease: (theme) => released.push(theme) })
+  out.scrollback.setTheme(previous)
+  released.length = 0
 
   try {
     await out.scrollback.append(reasoning("before"))

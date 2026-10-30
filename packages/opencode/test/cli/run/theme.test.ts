@@ -1,8 +1,12 @@
-import { expect, test } from "bun:test"
-import { RGBA, type CliRenderer, type TerminalColors } from "@opentui/core"
+import { afterEach, expect, test } from "bun:test"
+import { ResourceContext, RGBA, type CliRenderer, type TerminalColors } from "@opentui/core"
 import { RUN_THEME_FALLBACK, generateSystem, resolveRunTheme, resolveTheme } from "@/cli/cmd/run/theme"
 
 const palette = ["#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5"] as const
+const contexts: ResourceContext[] = []
+afterEach(() => {
+  for (const context of contexts.splice(0)) context.destroy()
+})
 
 function terminalColors(input: Partial<TerminalColors> = {}): TerminalColors {
   return {
@@ -26,7 +30,10 @@ function renderer(
     fail?: boolean
   } = {},
 ) {
+  const context = new ResourceContext({ objectCapacity: 64, renderCellsMax: 1 })
+  contexts.push(context)
   return {
+    nativeScene: { resourceContext: context } as CliRenderer["nativeScene"],
     themeMode: input.themeMode,
     getPalette: async () => {
       if (input.fail) {

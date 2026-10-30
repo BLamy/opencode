@@ -1,7 +1,10 @@
 import wrapAnsiNpm from "wrap-ansi"
+import measureStringWidth from "string-width"
+import stripAnsiSequences from "strip-ansi"
 import * as yaml from "yaml"
 import { compare, satisfies as semverSatisfies } from "./semver.browser"
 import { resolveCommand } from "./which.browser"
+import { readFile, stat, writeFile } from "./fs.browser"
 
 function normalizePathname(pathname: string): string {
   if (pathname.startsWith("/") && /^[A-Za-z]:/.test(pathname.slice(1))) {
@@ -29,11 +32,69 @@ export function pathToFileURL(path: string): URL {
 }
 
 function stripANSI(input: string): string {
-  return input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+  return stripAnsiSequences(input)
 }
 
 function stringWidth(input: string): number {
-  return Array.from(stripANSI(input)).length
+  return measureStringWidth(input)
+}
+
+type FilePath = string | URL
+
+function filePath(value: FilePath): string {
+  return value instanceof URL ? fileURLToPath(value) : value
+}
+
+/** The browser VFS stores UTF-8 text; these operations share the same scoped host bridge as Node fs. */
+class BrowserBunFile {
+  readonly name: string
+
+  constructor(path: FilePath) {
+    this.name = filePath(path)
+  }
+
+  async text(): Promise<string> {
+    return readFile(this.name, "utf8") as Promise<string>
+  }
+
+  async json<T = unknown>(): Promise<T> {
+    const text = await this.text()
+    return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text) as T
+  }
+
+  async exists(): Promise<boolean> {
+    try {
+      return (await stat(this.name)).isFile()
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return false
+      throw error
+    }
+  }
+}
+
+export function file(path: FilePath): BrowserBunFile {
+  return new BrowserBunFile(path)
+}
+
+type WriteData = string | ArrayBuffer | ArrayBufferView | Blob | Response | BrowserBunFile
+
+export async function write(destination: FilePath | BrowserBunFile, data: WriteData): Promise<number> {
+  const path = destination instanceof BrowserBunFile ? destination.name : filePath(destination)
+  let content: string
+  if (typeof data === "string") content = data
+  else if (data instanceof BrowserBunFile) content = await data.text()
+  else {
+    const bytes =
+      data instanceof ArrayBuffer
+        ? new Uint8Array(data)
+        : ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : new Uint8Array(await data.arrayBuffer())
+    // Reject binary data that a text-only host bridge cannot preserve.
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
+  }
+  await writeFile(path, content)
+  return textEncoder.encode(content).byteLength
 }
 
 async function stdinText(): Promise<string> {
@@ -158,11 +219,7 @@ function unsupportedGenerateHeapSnapshot(): never {
 
 function gc(): void {}
 
-function wrapAnsi(
-  input: string,
-  columns: number,
-  options?: WrapAnsiOptions,
-): string {
+function wrapAnsi(input: string, columns: number, options?: WrapAnsiOptions): string {
   return wrapAnsiNpm(input, columns, options)
 }
 
@@ -173,12 +230,12 @@ type JSONLParseResult = {
   done: boolean
 }
 
-function normalizeJSONLInput(data: string | Buffer, offset: number): { content: string; offset: number; length: number } {
+function normalizeJSONLInput(
+  data: string | Buffer,
+  offset: number,
+): { content: string; offset: number; length: number } {
   if (typeof data === "string") {
-    const normalizedOffset =
-      offset === 0 && data.startsWith(UTF8_BOM)
-        ? UTF8_BOM.length
-        : offset
+    const normalizedOffset = offset === 0 && data.startsWith(UTF8_BOM) ? UTF8_BOM.length : offset
     return {
       content: data,
       offset: normalizedOffset,
@@ -187,13 +244,7 @@ function normalizeJSONLInput(data: string | Buffer, offset: number): { content: 
   }
 
   let normalizedOffset = offset
-  if (
-    normalizedOffset === 0 &&
-    data.length >= 3 &&
-    data[0] === 0xef &&
-    data[1] === 0xbb &&
-    data[2] === 0xbf
-  ) {
+  if (normalizedOffset === 0 && data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf) {
     normalizedOffset = 3
   }
 
@@ -204,10 +255,7 @@ function normalizeJSONLInput(data: string | Buffer, offset: number): { content: 
   }
 }
 
-function parseJSONLChunk(
-  data: string | Buffer,
-  offset = 0,
-): JSONLParseResult {
+function parseJSONLChunk(data: string | Buffer, offset = 0): JSONLParseResult {
   const normalized = normalizeJSONLInput(data, offset)
   const values: unknown[] = []
   let cursor = normalized.offset
@@ -289,6 +337,8 @@ function unsupportedTemplateTag(): never {
 }
 
 const BunShim = {
+  file,
+  write,
   fileURLToPath,
   pathToFileURL,
   listen: unsupportedListen,
@@ -331,11 +381,12 @@ if (typeof globalThis.Bun === "undefined") {
     writable: true,
     configurable: true,
   })
-} else if (
-  (typeof globalThis.Bun === "object" && globalThis.Bun !== null) ||
-  typeof globalThis.Bun === "function"
-) {
-  Object.assign(globalThis.Bun, BunShim)
+} else if ((typeof globalThis.Bun === "object" && globalThis.Bun !== null) || typeof globalThis.Bun === "function") {
+  // A host may already provide Bun operations. Preserve them, including native
+  // Bun when this module is imported by the runtime's own regression tests.
+  for (const [key, value] of Object.entries(BunShim)) {
+    if (!(key in globalThis.Bun)) Object.assign(globalThis.Bun, { [key]: value })
+  }
 }
 
 ensureGlobalBunBinding()

@@ -2,6 +2,7 @@
 // Delegates to the shared browser VFS and optional external workspace bridge.
 
 import { Readable, Writable } from "stream"
+import promises from "./fs.browser"
 import {
   _vfs_addDir,
   _vfs_exists,
@@ -11,6 +12,7 @@ import {
   _vfs_remove,
   _vfs_setFile,
   _vfs_stat,
+  _vfs_setTimes,
   type BrowserWorkspaceDirent,
 } from "./fs.browser"
 
@@ -44,12 +46,27 @@ export function writeFileSync(path: string, data: string | Uint8Array): void {
   _vfs_setFile(path, content)
 }
 
+export function appendFileSync(path: string, data: string | Uint8Array): void {
+  const content = typeof data === "string" ? data : new TextDecoder().decode(data)
+  _vfs_setFile(path, (_vfs_getFile(path) ?? "") + content)
+}
+
 export function existsSync(path: string): boolean {
   return _vfs_exists(path)
 }
 
-export function mkdirSync(path: string, _opts?: any): void {
-  _vfs_addDir(path)
+export function mkdirSync(path: string, opts?: { recursive?: boolean }): void {
+  const normalized = normalizePath(path)
+  if (_vfs_exists(normalized)) {
+    if (opts?.recursive && _vfs_isDir(normalized)) return
+    throw Object.assign(new Error(`EEXIST: file already exists, mkdir '${path}'`), { code: "EEXIST" })
+  }
+  const parent = normalized.slice(0, normalized.lastIndexOf("/")) || "/"
+  if (!_vfs_isDir(parent)) {
+    if (!opts?.recursive) throw enoent("mkdir", parent)
+    mkdirSync(parent, opts)
+  }
+  _vfs_addDir(normalized)
 }
 
 export function readdirSync(path: string, opts?: any): any[] {
@@ -92,11 +109,20 @@ export function rmSync(path: string, opts?: { recursive?: boolean; force?: boole
     throw enoent("rm", path)
   }
 
-  if (_vfs_isDir(path)) {
-    return
-  }
-
+  if (_vfs_isDir(path) && !opts?.recursive && _vfs_readdir(path).length)
+    throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rm '${path}'`), { code: "ENOTEMPTY" })
   _vfs_remove(path, { recursive: Boolean(opts?.recursive) })
+}
+
+export function rmdirSync(path: string): void {
+  if (!_vfs_isDir(path)) throw enoent("rmdir", path)
+  if (_vfs_readdir(path).length)
+    throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rmdir '${path}'`), { code: "ENOTEMPTY" })
+  _vfs_remove(path)
+}
+
+export function utimesSync(path: string, atime: string | number | Date, mtime: string | number | Date): void {
+  _vfs_setTimes(path, atime, mtime)
 }
 
 export function chmodSync(): void {}
@@ -137,11 +163,62 @@ export function createWriteStream(path: string) {
 }
 
 // Re-export promises API
-export { default as promises } from "./fs.browser"
+export { promises }
+
+type Callback<T = undefined> = (error: unknown, result?: T) => void
+function complete<T>(fn: () => T, callback: Callback<T>) {
+  queueMicrotask(() => {
+    let result: T
+    try {
+      result = fn()
+    } catch (error) {
+      callback(error)
+      return
+    }
+    callback(null, result)
+  })
+}
+export function readFile(
+  path: string,
+  options: string | Callback<string | Buffer>,
+  callback?: Callback<string | Buffer>,
+) {
+  complete(
+    () => readFileSync(path, typeof options === "string" ? options : undefined),
+    typeof options === "function" ? options : callback!,
+  )
+}
+export function writeFile(path: string, data: string | Uint8Array, options: unknown, callback?: Callback<void>) {
+  complete(() => writeFileSync(path, data), typeof options === "function" ? (options as Callback<void>) : callback!)
+}
+export function mkdir(path: string, options: { recursive?: boolean } | Callback<void>, callback?: Callback<void>) {
+  complete(
+    () => mkdirSync(path, typeof options === "function" ? undefined : options),
+    typeof options === "function" ? options : callback!,
+  )
+}
+export const stat = (path: string, callback: Callback<ReturnType<typeof statSync>>) =>
+  complete(() => statSync(path), callback)
+export const lstat = stat
+export const rmdir = (path: string, callback: Callback<void>) => complete(() => rmdirSync(path), callback)
+export const unlink = (path: string, callback: Callback<void>) => complete(() => unlinkSync(path), callback)
+export const realpath = Object.assign(
+  (path: string, callback: Callback<string>) => complete(() => realpathSync(path), callback),
+  {
+    native: (path: string, callback: Callback<string>) => complete(() => realpathSync(path), callback),
+  },
+)
+export const utimes = (
+  path: string,
+  atime: string | number | Date,
+  mtime: string | number | Date,
+  callback: Callback<void>,
+) => complete(() => utimesSync(path, atime, mtime), callback)
 
 export default {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -151,11 +228,22 @@ export default {
   accessSync,
   unlinkSync,
   rmSync,
+  rmdirSync,
+  utimesSync,
   chmodSync,
   chownSync,
   renameSync,
   constants,
   createReadStream,
   createWriteStream,
-  promises: import("./fs.browser"),
+  promises,
+  readFile,
+  writeFile,
+  mkdir,
+  stat,
+  lstat,
+  rmdir,
+  unlink,
+  realpath,
+  utimes,
 }

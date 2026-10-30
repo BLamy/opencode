@@ -9,7 +9,7 @@ import { ClipboardProvider, useClipboard } from "./context/clipboard"
 import { ExitProvider, useExit } from "./context/exit"
 import { EpilogueProvider } from "./context/epilogue"
 import * as Selection from "./util/selection"
-import { createCliRenderer, MouseButton } from "@opentui/core"
+import { createCliRenderer, MouseButton, type CliRenderer } from "@opentui/core"
 import { RouteProvider, useRoute } from "./context/route"
 import {
   Switch,
@@ -149,6 +149,8 @@ export type TuiInput = {
   events?: EventSource
   pluginHost: TuiPluginHost
   updater?: UpdateSource
+  /** A renderer supplied by a terminal host, including a browser WASM host. */
+  renderer?: CliRenderer
 }
 
 function errorMessage(error: unknown) {
@@ -174,7 +176,7 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
       const renderer = yield* Effect.acquireRelease(
         Effect.tryPromise({
           try: () =>
-            createCliRenderer({
+            input.renderer ? Promise.resolve(input.renderer) : createCliRenderer({
               externalOutputMode: "passthrough",
               targetFps: 60,
               gatherStats: false,

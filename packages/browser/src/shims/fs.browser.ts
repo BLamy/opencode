@@ -26,6 +26,7 @@ export interface BrowserWorkspaceDirent {
   name: string
   isDirectory: () => boolean
   isFile: () => boolean
+  isSymbolicLink?: () => boolean
 }
 
 export interface BrowserWorkspaceStats {
@@ -46,6 +47,7 @@ export interface BrowserWorkspaceBridge {
   remove?(path: string, opts?: { recursive?: boolean }): void
   rename?(oldPath: string, newPath: string): void
   listFiles?(root?: string): string[]
+  utimes?(path: string, atime: Date, mtime: Date): void
 }
 
 export function getWorkspaceRoot(): string {
@@ -90,10 +92,7 @@ let workspaceBridge: BrowserWorkspaceBridge | null = null
  */
 const workspaceBridgesByRoot = new Map<string, BrowserWorkspaceBridge[]>()
 
-export function registerWorkspaceBridgeForRoot(
-  root: string,
-  bridge: BrowserWorkspaceBridge,
-): void {
+export function registerWorkspaceBridgeForRoot(root: string, bridge: BrowserWorkspaceBridge): void {
   const normalizedRoot = normalizePath(root)
   const stack = workspaceBridgesByRoot.get(normalizedRoot)
   if (stack) {
@@ -111,10 +110,7 @@ export function registerWorkspaceBridgeForRoot(
  * TUI for the same sandbox), and the newest live registration wins, so an
  * older handle's dispose never tears down a newer one.
  */
-export function unregisterWorkspaceBridgeForRoot(
-  root: string,
-  bridge: BrowserWorkspaceBridge,
-): void {
+export function unregisterWorkspaceBridgeForRoot(root: string, bridge: BrowserWorkspaceBridge): void {
   const normalizedRoot = normalizePath(root)
   const stack = workspaceBridgesByRoot.get(normalizedRoot)
   if (!stack) return
@@ -127,17 +123,11 @@ export function unregisterWorkspaceBridgeForRoot(
   }
 }
 
-function resolveWorkspaceBridgeByPath(
-  path: string,
-): BrowserWorkspaceBridge | null {
+function resolveWorkspaceBridgeByPath(path: string): BrowserWorkspaceBridge | null {
   let best: BrowserWorkspaceBridge | null = null
   let bestLength = -1
   for (const [root, stack] of workspaceBridgesByRoot) {
-    if (
-      stack.length > 0 &&
-      (path === root || path.startsWith(`${root}/`)) &&
-      root.length > bestLength
-    ) {
+    if (stack.length > 0 && (path === root || path.startsWith(`${root}/`)) && root.length > bestLength) {
       best = stack[stack.length - 1]
       bestLength = root.length
     }
@@ -222,9 +212,7 @@ function isWorkspacePath(path: string): boolean {
   // Scoped roots win when the active scope carries them; the module globals
   // remain the fallback for legacy callers that only scope the bridge.
   const roots = scopedWorkspaceScope.getStore()?.aliases ?? workspaceRootAliases
-  return Array.from(roots).some((root) => (
-    path === root || path.startsWith(`${root}/`)
-  ))
+  return Array.from(roots).some((root) => path === root || path.startsWith(`${root}/`))
 }
 
 function isBridgedPath(path: string): boolean {
@@ -248,6 +236,7 @@ function createDirent(name: string, type: "file" | "directory"): BrowserWorkspac
     name,
     isDirectory: () => type === "directory",
     isFile: () => type === "file",
+    isSymbolicLink: () => false,
   }
 }
 
@@ -310,7 +299,7 @@ function internalStat(path: string): BrowserWorkspaceStats | undefined {
   }
 
   if (_dirs.has(path)) {
-    return createStats("directory", 0, 0)
+    return createStats("directory", 0, _mtimes.get(path) ?? 0)
   }
 
   return undefined
@@ -322,8 +311,17 @@ function enoent(action: string, path: string): Error & { code: "ENOENT" } {
   return error
 }
 
-export async function mkdir(path: string, _opts?: any): Promise<void> {
+export async function mkdir(path: string, opts?: { recursive?: boolean; mode?: number }): Promise<void> {
   const normalized = normalizePath(path)
+  if (_vfs_exists(normalized)) {
+    if (opts?.recursive && _vfs_isDir(normalized)) return
+    throw Object.assign(new Error(`EEXIST: file already exists, mkdir '${path}'`), { code: "EEXIST" })
+  }
+  const parent = normalized.slice(0, normalized.lastIndexOf("/")) || "/"
+  if (!_vfs_isDir(parent)) {
+    if (!opts?.recursive) throw enoent("mkdir", parent)
+    await mkdir(parent, opts)
+  }
   const bridge = getWorkspaceBridge(normalized)
   if (bridge) {
     bridge.mkdir(normalized)
@@ -331,12 +329,7 @@ export async function mkdir(path: string, _opts?: any): Promise<void> {
   }
 
   _dirs.add(normalized)
-  const parts = normalized.split("/").filter(Boolean)
-  let current = ""
-  for (const part of parts) {
-    current += "/" + part
-    _dirs.add(current)
-  }
+  _mtimes.set(normalized, Date.now())
 }
 
 export async function readFile(path: string, encoding?: string): Promise<string | Uint8Array> {
@@ -351,25 +344,31 @@ export async function readFile(path: string, encoding?: string): Promise<string 
   return new TextEncoder().encode(content)
 }
 
-export async function writeFile(path: string, data: string | Uint8Array, _opts?: any): Promise<void> {
+export async function writeFile(
+  path: string,
+  data: string | Uint8Array,
+  opts?: { flag?: string } | string,
+): Promise<void> {
   const normalized = normalizePath(path)
+  const flag = typeof opts === "object" ? (opts.flag ?? "w") : "w"
+  if (flag.includes("x") && _vfs_exists(normalized))
+    throw Object.assign(new Error(`EEXIST: file already exists, open '${path}'`), { code: "EEXIST" })
   const content = typeof data === "string" ? data : new TextDecoder().decode(data)
   const bridge = getWorkspaceBridge(normalized)
   if (bridge) {
-    bridge.writeFile(normalized, content)
+    bridge.writeFile(normalized, (flag.startsWith("a") ? (bridge.readFile(normalized) ?? "") : "") + content)
     return
   }
 
   ensureParentDirs(normalized)
-  _files.set(normalized, content)
+  _files.set(normalized, (flag.startsWith("a") ? (_files.get(normalized) ?? "") : "") + content)
   _mtimes.set(normalized, Date.now())
 }
 
 export async function appendFile(path: string, data: string | Uint8Array, _opts?: any): Promise<void> {
   const normalized = normalizePath(path)
   const previous = await readFile(normalized, "utf8").catch(() => "")
-  const next =
-    previous + (typeof data === "string" ? data : new TextDecoder().decode(data))
+  const next = previous + (typeof data === "string" ? data : new TextDecoder().decode(data))
   await writeFile(normalized, next)
 }
 
@@ -378,9 +377,7 @@ export async function readdir(path: string, opts?: any): Promise<any[]> {
   const bridge = getWorkspaceBridge(normalized)
   const entries = bridge ? bridge.readdir(normalized) : listInternal(normalized)
   return entries.map((entry) =>
-    opts?.withFileTypes
-      ? entry
-      : entry.name
+    opts?.withFileTypes ? { ...entry, isSymbolicLink: entry.isSymbolicLink ?? (() => false) } : entry.name,
   )
 }
 
@@ -395,10 +392,35 @@ export async function stat(path: string): Promise<any> {
   throw enoent("stat", path)
 }
 
+export async function opendir(path: string) {
+  const entries = await readdir(path, { withFileTypes: true })
+  let index = 0
+  return {
+    path,
+    async read() {
+      return entries[index++] ?? null
+    },
+    async close() {
+      index = entries.length
+    },
+    async *[Symbol.asyncIterator]() {
+      while (index < entries.length) yield entries[index++]
+    },
+  }
+}
+
 export const lstat = stat
 
-export async function open(path: string, _flags?: string): Promise<{
-  read(buffer: Uint8Array, offset?: number, length?: number, position?: number): Promise<{ bytesRead: number; buffer: Uint8Array }>
+export async function open(
+  path: string,
+  _flags?: string,
+): Promise<{
+  read(
+    buffer: Uint8Array,
+    offset?: number,
+    length?: number,
+    position?: number,
+  ): Promise<{ bytesRead: number; buffer: Uint8Array }>
   close(): Promise<void>
 }> {
   const content = await readFile(path)
@@ -493,7 +515,13 @@ export async function realpath(path: string): Promise<string> {
 
 export async function chmod(): Promise<void> {}
 export async function chown(): Promise<void> {}
-export async function utimes(): Promise<void> {}
+export async function utimes(
+  path: string,
+  atime: string | number | Date,
+  mtime: string | number | Date,
+): Promise<void> {
+  _vfs_setTimes(path, atime, mtime)
+}
 export async function link(): Promise<void> {}
 export async function symlink(): Promise<void> {}
 export async function readlink(path: string): Promise<string> {
@@ -552,6 +580,22 @@ export function _vfs_addDir(path: string) {
   }
 
   _dirs.add(normalized)
+  _mtimes.set(normalized, Date.now())
+}
+
+export function _vfs_setTimes(path: string, atime: string | number | Date, mtime: string | number | Date) {
+  const normalized = normalizePath(path)
+  if (!_vfs_exists(normalized)) throw enoent("utimes", path)
+  const date = (value: string | number | Date) =>
+    value instanceof Date ? value : new Date(typeof value === "number" ? value * 1000 : value)
+  const bridge = getWorkspaceBridge(normalized)
+  if (bridge) {
+    if (!bridge.utimes)
+      throw Object.assign(new Error("The workspace bridge does not support timestamps"), { code: "ENOSYS" })
+    bridge.utimes(normalized, date(atime), date(mtime))
+    return
+  }
+  _mtimes.set(normalized, date(mtime).getTime())
 }
 
 export function _vfs_remove(path: string, opts?: { recursive?: boolean }) {
@@ -564,6 +608,7 @@ export function _vfs_remove(path: string, opts?: { recursive?: boolean }) {
 
   _files.delete(normalized)
   _mtimes.delete(normalized)
+  _dirs.delete(normalized)
   if (opts?.recursive) {
     for (const key of Array.from(_files.keys())) {
       if (key.startsWith(`${normalized}/`)) {

@@ -6,13 +6,7 @@ import { AsyncLocalStorage } from "async_hooks"
 import { EventEmitter } from "events"
 import path from "path"
 import { PassThrough } from "stream"
-import {
-  _vfs_addDir,
-  _vfs_getFile,
-  _vfs_listAll,
-  _vfs_readdir,
-  getWorkspaceRoot,
-} from "./fs.browser"
+import { _vfs_addDir, _vfs_getFile, _vfs_listAll, _vfs_readdir, getWorkspaceRoot } from "./fs.browser"
 
 export interface BrowserProcessBridge {
   exec(input: {
@@ -39,10 +33,7 @@ const scopedProcessBridge = new AsyncLocalStorage<BrowserProcessBridge>()
  */
 const processBridgesByRoot = new Map<string, BrowserProcessBridge[]>()
 
-export function registerProcessBridgeForRoot(
-  root: string,
-  bridge: BrowserProcessBridge,
-): void {
+export function registerProcessBridgeForRoot(root: string, bridge: BrowserProcessBridge): void {
   const normalizedRoot = normalizeRootPath(root)
   const stack = processBridgesByRoot.get(normalizedRoot)
   if (stack) {
@@ -57,10 +48,7 @@ export function registerProcessBridgeForRoot(
  * fs.browser): a transient client's dispose never tears down the mounted
  * TUI's registration for the same root, and vice versa.
  */
-export function unregisterProcessBridgeForRoot(
-  root: string,
-  bridge: BrowserProcessBridge,
-): void {
+export function unregisterProcessBridgeForRoot(root: string, bridge: BrowserProcessBridge): void {
   const normalizedRoot = normalizeRootPath(root)
   const stack = processBridgesByRoot.get(normalizedRoot)
   if (!stack) return
@@ -83,18 +71,12 @@ function normalizeRootPath(p: string): string {
   return "/" + resolved.join("/")
 }
 
-function resolveProcessBridgeByCwd(
-  cwd: string | undefined,
-): BrowserProcessBridge | null {
+function resolveProcessBridgeByCwd(cwd: string | undefined): BrowserProcessBridge | null {
   if (!cwd) return null
   let best: BrowserProcessBridge | null = null
   let bestLength = -1
   for (const [root, stack] of processBridgesByRoot) {
-    if (
-      stack.length > 0 &&
-      (cwd === root || cwd.startsWith(`${root}/`)) &&
-      root.length > bestLength
-    ) {
+    if (stack.length > 0 && (cwd === root || cwd.startsWith(`${root}/`)) && root.length > bestLength) {
       best = stack[stack.length - 1]
       bestLength = root.length
     }
@@ -110,10 +92,7 @@ export function detachProcessBridge(): void {
   processBridge = null
 }
 
-export function withProcessBridgeScope<T>(
-  bridge: BrowserProcessBridge | null | undefined,
-  fn: () => T,
-): T {
+export function withProcessBridgeScope<T>(bridge: BrowserProcessBridge | null | undefined, fn: () => T): T {
   if (!bridge) {
     return fn()
   }
@@ -121,7 +100,7 @@ export function withProcessBridgeScope<T>(
   return scopedProcessBridge.run(bridge, fn)
 }
 
-class FakeChildProcess extends EventEmitter {
+class BrowserChildProcess extends EventEmitter {
   stdout = new PassThrough()
   stderr = new PassThrough()
   stdin = new PassThrough()
@@ -237,10 +216,7 @@ async function executeCommand(
     return runRipgrep(args, cwd)
   }
 
-  const bridge =
-    resolveProcessBridgeByCwd(cwd) ??
-    scopedProcessBridge.getStore() ??
-    processBridge
+  const bridge = resolveProcessBridgeByCwd(cwd) ?? scopedProcessBridge.getStore() ?? processBridge
   if (bridge) {
     return bridge.exec({
       command,
@@ -329,7 +305,7 @@ export async function runBrowserCommand(input: {
 
 export function spawn(command: string, argsOrOpts?: any, maybeOpts?: any): any {
   const { args, opts } = normalizeSpawnInput(command, argsOrOpts, maybeOpts)
-  const child = new FakeChildProcess()
+  const child = new BrowserChildProcess()
 
   setTimeout(async () => {
     try {
@@ -354,7 +330,7 @@ export function spawn(command: string, argsOrOpts?: any, maybeOpts?: any): any {
 }
 
 export function execSync(command: string): string {
-  return `[browser] Command not available: ${command}`
+  throw new Error(`Synchronous process execution is unavailable in the browser: ${command}`)
 }
 
 export function exec(command: string, callback?: Function): any {
@@ -396,10 +372,10 @@ export function spawnSync(command: string, args: string[] = []): any {
   }
 
   return {
-    status: 0,
-    stdout: Buffer.from(`[browser] ${command} ${args.join(" ")}`),
-    stderr: Buffer.from(""),
-    error: null,
+    status: 127,
+    stdout: Buffer.from(""),
+    stderr: Buffer.from(`Synchronous process execution is unavailable in the browser: ${command}`),
+    error: new Error("Synchronous process execution is unavailable in the browser"),
   }
 }
 

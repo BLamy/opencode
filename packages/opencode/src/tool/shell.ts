@@ -314,11 +314,12 @@ const parser = lazy(async () => {
     with: { type: "wasm" },
   })
   const treePath = resolveWasm(treeWasm)
+  type ParserModule = typeof Parser.init extends (options?: infer Options) => unknown ? Options : never
   await Parser.init({
     locateFile() {
       return treePath
     },
-  })
+  } as unknown as ParserModule)
   const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
     with: { type: "wasm" },
   })

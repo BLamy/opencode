@@ -42,7 +42,7 @@ export function toArrayBuffer(
   }
 
   if (ArrayBuffer.isView(input)) {
-    return input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength)
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength).slice().buffer
   }
 
   return new Uint8Array(input).buffer

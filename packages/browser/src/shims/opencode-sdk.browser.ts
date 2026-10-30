@@ -1,5 +1,6 @@
-// Stub for @opencode-ai/sdk
-// The browser version uses the SDK client to talk to the in-browser Hono server
+// Legacy host facade. New browser integrations use the production
+// @opencode-ai/sdk/v2/client with createBrowserBackend().fetch, which also
+// streams SSE through the embedded handler without a network EventSource.
 
 export function createOpencodeClient(opts: {
   baseUrl: string
@@ -33,12 +34,7 @@ export function createOpencodeClient(opts: {
   return {
     session: {
       list: (query?: { directory?: string }) =>
-        request(
-          "GET",
-          query?.directory
-            ? `/session?directory=${encodeURIComponent(query.directory)}`
-            : "/session",
-        ),
+        request("GET", query?.directory ? `/session?directory=${encodeURIComponent(query.directory)}` : "/session"),
       create: (data: any) => request("POST", "/session", data),
       get: (id: string) => request("GET", `/session/${id}`),
       fork: (data: any) => request("POST", `/session/${data.sessionID}/fork`),
@@ -46,12 +42,10 @@ export function createOpencodeClient(opts: {
       command: (data: any) => request("POST", `/session/${data.sessionID}/command`, data),
       share: (data: any) => request("POST", `/session/${data.sessionID}/share`),
       delete: (id: string) => request("DELETE", `/session/${id}`),
-      messages: (data: { path: { id: string } }) =>
-        request("GET", `/session/${data.path.id}/message`),
+      messages: (data: { path: { id: string } }) => request("GET", `/session/${data.path.id}/message`),
     },
     tui: {
-      appendPrompt: (data: { body: { text: string } }) =>
-        request("POST", "/tui/append-prompt", data.body),
+      appendPrompt: (data: { body: { text: string } }) => request("POST", "/tui/append-prompt", data.body),
       submitPrompt: () => request("POST", "/tui/submit-prompt", {}),
     },
     config: {
@@ -90,7 +84,9 @@ export function createOpencodeClient(opts: {
             if (queue.length > 0) {
               yield queue.shift()!
             } else {
-              await new Promise<void>((r) => { resolve = r })
+              await new Promise<void>((r) => {
+                resolve = r
+              })
             }
           }
         })()

@@ -1,141 +1,57 @@
-// OpenCode Browser - Main Entry Point
-// Initializes VFS, database, terminal, and agent loop
-
-import "@xterm/xterm/css/xterm.css"
-import { TerminalAdapter } from "./terminal-adapter"
+import "./styles/terminal.css"
+import { mountOpenCodeTui } from "./tui-bootstrap"
 import { seedDemoProject } from "./seed-project"
-import { initBrowserDB, startAutoPersist, persistDB } from "./shims/db.browser"
-import { BrowserAgent } from "./opencode-bootstrap"
-import { getWorkspaceRoot } from "./shims/fs.browser"
 
-let terminal: TerminalAdapter
-let agent: BrowserAgent | null = null
-let currentAbortController: AbortController | null = null
+declare const OPENCODE_VERSION: string
+declare const OPENTUI_VERSION: string
 
-async function main() {
-  // 1. Seed VFS with demo project
-  seedDemoProject()
+const container = document.querySelector<HTMLElement>("#terminal-container")!
+const status = document.querySelector<HTMLElement>("#session-info")!
+const params = new URLSearchParams(window.location.search)
+document.documentElement.dataset.embed = String(params.has("embed"))
+document.querySelector<HTMLElement>("#version")!.textContent = `v${OPENCODE_VERSION} · OpenTUI ${OPENTUI_VERSION}`
 
-  // 2. Initialize sql.js database
-  try {
-    await initBrowserDB()
-    startAutoPersist()
-    console.log("[opencode-browser] Database initialized")
-  } catch (e) {
-    console.error("[opencode-browser] Failed to initialize database:", e)
-  }
-
-  // 3. Set up terminal
-  const container = document.getElementById("terminal-container")!
-  terminal = new TerminalAdapter({
-    container,
-    onMessage: handleUserMessage,
-    onCancel: handleCancel,
-  })
-
-  // 4. Set up API key input
-  setupApiKeyUI()
-
-  // 5. Check for saved API key
-  const savedKey = localStorage.getItem("opencode-api-key")
-  if (savedKey) {
-    initAgent(savedKey)
-  } else {
-    terminal.writeInfo("Enter your Anthropic API key above to get started.")
-    terminal.writeln("")
-    terminal.writeInfo("Your key is stored locally and never sent to any server except Anthropic's API.")
-    terminal.writeln("")
-  }
-}
-
-function setupApiKeyUI() {
-  const input = document.getElementById("api-key-input") as HTMLInputElement
-  const button = document.getElementById("api-key-submit") as HTMLButtonElement
-  const bar = document.getElementById("api-key-bar")!
-
-  // Check if already connected
-  const savedKey = localStorage.getItem("opencode-api-key")
-  if (savedKey) {
-    input.value = "sk-ant-••••••••"
-    button.textContent = "Reconnect"
-  }
-
-  button.addEventListener("click", () => {
-    const key = input.value.trim()
-    if (!key || key === "sk-ant-••••••••") return
-
-    localStorage.setItem("opencode-api-key", key)
-    input.value = "sk-ant-••••••••"
-    button.textContent = "Reconnect"
-    initAgent(key)
-  })
-
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") button.click()
-  })
-
-  // Focus input on click
-  input.addEventListener("focus", () => {
-    if (input.value === "sk-ant-••••••••") {
-      input.value = ""
-    }
-  })
-}
-
-function initAgent(apiKey: string) {
-  agent = new BrowserAgent(apiKey, terminal)
-  terminal.writeln("")
-  terminal.writeInfo("Connected! Type a message to start chatting with the AI agent.")
-  terminal.writeInfo(`The agent can read, write, and edit files in the demo project at ${getWorkspaceRoot()}.`)
-  terminal.writeln("")
-  terminal.writeInfo("Try: \"Look at the helper functions in src/utils/helpers.ts and fix the bugs\"")
-  terminal.writeln("")
-  terminal.showPrompt()
-
-  // Update status bar
-  document.getElementById("session-info")!.textContent = "Ready"
-}
-
-async function handleUserMessage(message: string) {
-  if (!agent) {
-    terminal.writeError("No API key configured. Enter your key above.")
-    terminal.showPrompt()
-    return
-  }
-
-  // Update status
-  document.getElementById("session-info")!.textContent = "Thinking..."
-
-  currentAbortController = new AbortController()
-
-  try {
-    await agent.sendMessage(message, currentAbortController.signal)
-  } catch (e: any) {
-    if (e.name !== "AbortError") {
-      terminal.writeError(e.message || "An error occurred")
-    }
-  } finally {
-    currentAbortController = null
-    document.getElementById("session-info")!.textContent = "Ready"
-    terminal.showPrompt()
-    await persistDB()
-  }
-}
-
-function handleCancel() {
-  if (currentAbortController) {
-    currentAbortController.abort()
-    currentAbortController = null
-    terminal.writeInfo("Cancelled")
-    document.getElementById("session-info")!.textContent = "Ready"
-  }
-}
-
-// Boot
-main().catch((e) => {
-  console.error("[opencode-browser] Fatal error:", e)
-  document.body.innerHTML = `<div style="padding: 20px; color: red;">
-    <h2>OpenCode Browser failed to start</h2>
-    <pre>${e.message}\n${e.stack}</pre>
-  </div>`
+seedDemoProject()
+const url = params.get("server")
+mountOpenCodeTui({
+  container,
+  ...(url ? { server: { url: new URL(url).href } } : {}),
 })
+  .then((session) => {
+    status.textContent = url ? "Connected to " + new URL(url).host : "Running locally · WebAssembly"
+    container.dataset.state = "ready"
+    window.parent.postMessage({ type: "opencode:ready", version: OPENCODE_VERSION }, "*")
+    window.addEventListener("pagehide", session.dispose, { once: true })
+    session.exited.catch(fail)
+  })
+  .catch(fail)
+
+function fail(error: unknown) {
+  console.error("[opencode-browser]", error)
+  status.textContent = "Failed to start"
+  container.dataset.state = "error"
+  const message = document.createElement("pre")
+  message.textContent = error instanceof Error ? error.message : String(error)
+  container.replaceChildren(message)
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "BROWSER_DATABASE_UPGRADE_REQUIRED" &&
+    "originalSnapshot" in error &&
+    error.originalSnapshot instanceof Uint8Array
+  ) {
+    const snapshot = error.originalSnapshot
+    const button = document.createElement("button")
+    button.textContent = "Download database backup"
+    button.addEventListener("click", () => {
+      const url = URL.createObjectURL(new Blob([new Uint8Array(snapshot).buffer], { type: "application/vnd.sqlite3" }))
+      const link = document.createElement("a")
+      link.href = url
+      link.download = "opencode-browser-backup.sqlite"
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    })
+    container.append(button)
+  }
+}

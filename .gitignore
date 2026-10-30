@@ -33,3 +33,5 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 /artifacts/
+/vendor/opentui/
+/packages/browser/.runtime/

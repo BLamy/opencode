@@ -24,7 +24,7 @@ export class AsyncLocalStorage<T> {
       if (
         result &&
         (typeof result === "object" || typeof result === "function") &&
-        typeof (result as PromiseLike<unknown>).then === "function"
+        typeof (result as unknown as PromiseLike<unknown>).then === "function"
       ) {
         return Promise.resolve(result).finally(() => {
           this.remove(entry)
@@ -50,14 +50,26 @@ export class AsyncLocalStorage<T> {
 
 export class AsyncResource {
   constructor(_type: string) {}
-  runInAsyncScope<R>(fn: () => R): R { return fn() }
-  emitDestroy(): this { return this }
-  asyncId(): number { return 0 }
-  triggerAsyncId(): number { return 0 }
+  runInAsyncScope<R>(fn: () => R): R {
+    return fn()
+  }
+  emitDestroy(): this {
+    return this
+  }
+  asyncId(): number {
+    return 0
+  }
+  triggerAsyncId(): number {
+    return 0
+  }
 }
 
-export function executionAsyncId(): number { return 0 }
-export function triggerAsyncId(): number { return 0 }
+export function executionAsyncId(): number {
+  return 0
+}
+export function triggerAsyncId(): number {
+  return 0
+}
 export function createHook(): { enable(): void; disable(): void } {
   return { enable() {}, disable() {} }
 }

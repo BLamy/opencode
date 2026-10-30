@@ -1,0 +1,91 @@
+name: Browser and GitHub Pages
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "packages/browser/**"
+      - "packages/core/**"
+      - "packages/opencode/**"
+      - "packages/server/**"
+      - "packages/tui/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/browser-pages.yml"
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read browser runtime revision
+        id: runtime
+        run: |
+          echo "repository=$(jq -r .repository packages/browser/opentui.json)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(jq -r .ref packages/browser/opentui.json)" >> "$GITHUB_OUTPUT"
+      - name: Checkout OpenTUI WASM fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.runtime.outputs.repository }}
+          ref: ${{ steps.runtime.outputs.ref }}
+          path: vendor/opentui
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install OpenCode dependencies
+        run: bun install --frozen-lockfile
+      - name: Build OpenTUI browser runtime
+        working-directory: vendor/opentui
+        run: |
+          bun install --frozen-lockfile
+          bun run --cwd packages/core build:wasm
+          bun run --cwd packages/core build:lib
+      - name: Test browser runtime services
+        working-directory: packages/browser
+        run: bun run test
+      - name: Typecheck browser and current TUI
+        working-directory: packages/browser
+        env:
+          OPENTUI_DIR: ${{ github.workspace }}/vendor/opentui
+        run: bun typecheck
+      - name: Build browser application
+        working-directory: packages/browser
+        env:
+          OPENTUI_DIR: ${{ github.workspace }}/vendor/opentui
+          BASE_PATH: /opencode/
+        run: bun run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/browser/dist
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy browser application
+        id: deployment
+        uses: actions/deploy-pages@v4

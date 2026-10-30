@@ -1,6 +1,4 @@
-import semverPackage from "../../../../node_modules/semver/index.js"
-
-const semver = semverPackage as typeof import("semver")
+import semver from "semver"
 
 export const valid = semver.valid
 export const gt = semver.gt

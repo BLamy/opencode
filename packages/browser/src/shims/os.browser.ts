@@ -40,6 +40,10 @@ function arch(): string {
   return archValue
 }
 
+function hostname(): string {
+  return globalThis.location?.hostname ?? "browser"
+}
+
 function userInfo(): { username: string; homedir: string; shell: string; uid: number; gid: number } {
   return {
     username: "browser",
@@ -50,7 +54,7 @@ function userInfo(): { username: string; homedir: string; shell: string; uid: nu
   }
 }
 
-function networkInterfaces(): NodeJS.Dict<NodeJS.NetworkInterfaceInfo[]> {
+function networkInterfaces(): Record<string, never[]> {
   return {}
 }
 
@@ -58,6 +62,7 @@ const browserOs = {
   EOL,
   arch,
   homedir,
+  hostname,
   networkInterfaces,
   platform,
   release,
@@ -65,5 +70,5 @@ const browserOs = {
   userInfo,
 }
 
-export { EOL, arch, homedir, networkInterfaces, platform, release, tmpdir, userInfo }
+export { EOL, arch, homedir, hostname, networkInterfaces, platform, release, tmpdir, userInfo }
 export default browserOs

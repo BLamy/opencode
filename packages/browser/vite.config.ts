@@ -1,278 +1,320 @@
-import { readFile, readdir } from "node:fs/promises"
-import { defineConfig } from "vite"
+import { existsSync, readFileSync } from "node:fs"
+import { cp, readFile, readdir } from "node:fs/promises"
+import path from "node:path"
+import { transformAsync } from "@babel/core"
+import solid from "babel-preset-solid"
+import typescript from "@babel/preset-typescript"
+import { defineConfig, type Plugin } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
-import path from "path"
 
-function migrationTimestamp(tag: string): number {
-  const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(tag)
-  if (!match) {
-    return 0
-  }
+const root = path.resolve(__dirname, "../..")
+const opentui = path.resolve(
+  process.env.OPENTUI_DIR ??
+    (existsSync(path.join(root, "vendor/opentui")) ? path.join(root, "vendor/opentui") : path.join(root, "../opentui")),
+)
+const core = path.join(opentui, "packages/core")
+const shims = path.join(core, "src/browser/shims")
+const version = JSON.parse(readFileSync(path.join(root, "packages/opencode/package.json"), "utf8")).version
+const runtime = JSON.parse(readFileSync(path.join(__dirname, "opentui.json"), "utf8"))
+if (JSON.parse(readFileSync(path.join(core, "package.json"), "utf8")).version !== runtime.version)
+  throw new Error("OpenTUI checkout does not match packages/browser/opentui.json")
 
-  return Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    Number(match[6]),
-  )
+function exports(name: string) {
+  const dir = path.join(opentui, "packages", name)
+  const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"))
+  return Object.entries(pkg.exports).map(([key, entry]) => ({
+    find: new RegExp(`^@opentui/${name}${key === "." ? "" : key.slice(1)}$`),
+    replacement: path.join(dir, typeof entry === "string" ? entry : (entry as { import: string }).import),
+  }))
 }
 
-async function loadOpencodeMigrations(): Promise<Array<{ sql: string; timestamp: number; name: string }>> {
-  const migrationRoot = path.resolve(__dirname, "../opencode/migration")
-  const entries = await readdir(migrationRoot, { withFileTypes: true })
-
-  const directories = entries
-    .filter((entry) => entry.isDirectory() && /^\d{14}/.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()
-
-  return Promise.all(
-    directories.map(async (name) => ({
-      name,
-      sql: await readFile(path.join(migrationRoot, name, "migration.sql"), "utf8"),
-      timestamp: migrationTimestamp(name),
-    })),
-  )
-}
-
-function resolveVirtualModules(aliases: Record<string, string>) {
+function platform(): Plugin {
+  const names = [
+    "buffer",
+    "console",
+    "crypto",
+    "events",
+    "fs",
+    "fs/promises",
+    "module",
+    "os",
+    "path",
+    "process",
+    "stream",
+    "url",
+    "util",
+  ]
   return {
-    name: "resolve-virtual-modules",
-    enforce: "pre" as const,
-    resolveId(source: string) {
-      return aliases[source] ?? null
+    name: "opentui-browser-platform",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (source === "opencode-web-ui.gen.ts") return { id: source, external: true }
+      if (source.endsWith(".wasm")) return this.resolve(source + "?url", importer, { skipSelf: true })
+      if (/stream-browserify\/(promises|consumers)$/.test(source))
+        return path.join(__dirname, "src/shims/stream-" + source.split("/").at(-1) + ".browser.ts")
+      if (source.startsWith("vite-plugin-node-polyfills/shims/")) {
+        const name = source.slice("vite-plugin-node-polyfills/shims/".length)
+        return path.join(__dirname, "node_modules/vite-plugin-node-polyfills/shims", name, "dist/index.js")
+      }
+      for (const name of ["npm", "npm-config"]) {
+        if (
+          source === "@opencode-ai/core/" + name ||
+          (importer?.startsWith(path.join(root, "packages/core/src")) &&
+            /^\.\.?\//.test(source) &&
+            path.resolve(path.dirname(importer), source).replace(/\.ts$/, "") ===
+              path.join(root, "packages/core/src", name))
+        ) {
+          return path.join(__dirname, "src/shims/" + name + ".browser.ts")
+        }
+      }
+      if (importer?.startsWith(path.join(root, "packages/core/src")) && source === "./image/photon")
+        return path.join(__dirname, "src/shims/image.browser.ts")
+      if (!importer?.startsWith(opentui)) return
+      const name = source.replace(/^node:/, "")
+      if (!names.includes(name)) return
+      return path.join(shims, `${name === "fs/promises" ? "fs-promises" : name}.ts`)
+    },
+  }
+}
+
+function transform(): Plugin {
+  return {
+    name: "opentui-solid",
+    enforce: "pre",
+    async transform(code, id) {
+      if (/\.(md|txt)(\?|$)/.test(id)) return { code: "export default " + JSON.stringify(code), map: null }
+      if (!/\.[jt]sx$/.test(id.split("?")[0])) return
+      const result = await transformAsync(code.replace(/\/\*\*?\s*@jsxImportSource[^*]*\*\//g, ""), {
+        filename: id,
+        presets: [[solid, { moduleName: "@opentui/solid", generate: "universal" }], typescript],
+        sourceMaps: true,
+      })
+      return { code: result?.code ?? code, map: result?.map }
+    },
+  }
+}
+
+function snapshot(models: unknown): Plugin {
+  const id = "\0opencode-model-catalog"
+  return {
+    name: "opencode-official-model-snapshot",
+    enforce: "pre",
+    resolveId(source) {
+      if (source === "virtual:opencode-model-catalog") return id
+    },
+    load(source) {
+      if (source === id) return "export default JSON.parse(" + JSON.stringify(JSON.stringify(models)) + ")"
+    },
+    transform(code, source) {
+      if (source.split("?")[0] !== path.join(root, "packages/core/src/models-dev.ts")) return
+      if (!code.includes("declare const OPENCODE_MODELS_DEV:"))
+        this.error("OpenCode's model snapshot integration changed; update the browser snapshot loader")
+      return {
+        code: code.replace(
+          "declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined",
+          'import OPENCODE_MODELS_DEV from "virtual:opencode-model-catalog"',
+        ),
+        map: null,
+      }
+    },
+  }
+}
+
+function assets(catalog: { source: string; etag: string | null; fetchedAt: string }): Plugin {
+  const files = ["opentui.wasm", "parser.worker.browser.js", "tree-sitter.wasm", "assets"]
+  const dist = path.join(core, "dist")
+  return {
+    name: "opentui-browser-assets",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const name = (request.url ?? "").split("?")[0].replace(/^.*\/opentui\//, "")
+        if (!files.some((file) => name === file || name.startsWith(`${file}/`))) return next()
+        const file = path.resolve(dist, name)
+        if (!file.startsWith(`${dist}/`) || !existsSync(file)) return next()
+        response.setHeader(
+          "Content-Type",
+          file.endsWith(".wasm")
+            ? "application/wasm"
+            : file.endsWith(".js")
+              ? "text/javascript"
+              : "application/octet-stream",
+        )
+        response.end(readFileSync(file))
+      })
+    },
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: ".nojekyll", source: "" })
+      this.emitFile({
+        type: "asset",
+        fileName: "version.json",
+        source: JSON.stringify({
+          opencode: version,
+          opentui: runtime.version,
+          upstream: runtime.upstream,
+          renderer: runtime.ref,
+        }),
+      })
+      this.emitFile({
+        type: "asset",
+        fileName: "build-info.json",
+        source: JSON.stringify({
+          release: runtime.opencode,
+          upstream: runtime.upstream,
+          commit: process.env.GITHUB_SHA ?? null,
+          opentui: { version: runtime.version, commit: runtime.ref },
+          host: runtime.host,
+          catalog,
+        }),
+      })
+    },
+    async writeBundle() {
+      await Promise.all(
+        files.map((file) => cp(path.join(dist, file), path.join(__dirname, "dist/opentui", file), { recursive: true })),
+      )
     },
   }
 }
 
 export default defineConfig(async () => {
-  const opencodeMigrations = await loadOpencodeMigrations()
-
-  const bunBundleShimPath = path.resolve(__dirname, "src/shims/bun-bundle.browser.ts")
-  const bunSqliteShimPath = path.resolve(__dirname, "src/shims/bun-sqlite.browser.ts")
-  const bunPtyShimPath = path.resolve(__dirname, "src/shims/pty.browser.ts")
-
+  const source = "https://models.opencode.ai/api.json"
+  const response = await fetch(source, { signal: AbortSignal.timeout(30000) })
+  if (!response.ok) throw new Error("Unable to bundle the official model catalog: HTTP " + response.status)
+  const models = (await response.json()) as Record<string, { models: Record<string, unknown> }>
+  if (
+    !Object.keys(models).length ||
+    !Object.values(models).every((provider) => provider && typeof provider.models === "object")
+  )
+    throw new Error("The official model catalog has an invalid provider format")
+  const catalog = { source, etag: response.headers.get("etag"), fetchedAt: new Date().toISOString() }
+  const dir = path.join(root, "packages/opencode/migration")
+  const migrations = await Promise.all(
+    (await readdir(dir))
+      .filter((name) => /^\d{14}/.test(name))
+      .sort()
+      .map(async (name) => ({
+        name,
+        sql: await readFile(path.join(dir, name, "migration.sql"), "utf8"),
+        timestamp: Date.UTC(
+          Number(name.slice(0, 4)),
+          Number(name.slice(4, 6)) - 1,
+          Number(name.slice(6, 8)),
+          Number(name.slice(8, 10)),
+          Number(name.slice(10, 12)),
+          Number(name.slice(12, 14)),
+        ),
+      })),
+  )
+  const shim = (name: string) => path.join(__dirname, `src/shims/${name}.browser.ts`)
+  const aliases = {
+    bun: "bun",
+    "bun:bundle": "bun-bundle",
+    "bun:sqlite": "bun-sqlite",
+    "bun:ffi": "bun-ffi",
+    diagnostics_channel: "diagnostics-channel",
+    path: "path",
+    fs: "fs-sync",
+    "fs/promises": "fs",
+    os: "os",
+    child_process: "child-process",
+    async_hooks: "async-hooks",
+    module: "module",
+    v8: "v8",
+    net: "net",
+    readline: "readline",
+    "timers/promises": "timers-promises",
+    "stream/promises": "stream-promises",
+    "stream/consumers": "stream-consumers",
+    glob: "glob",
+    "xdg-basedir": "xdg",
+    clipboardy: "clipboard",
+    open: "open",
+    "@parcel/watcher": "watcher",
+    "@effect/platform-node": "effect-platform-node",
+  }
   return {
-  root: __dirname,
-  plugins: [
-    resolveVirtualModules({
-      "bun:bundle": bunBundleShimPath,
-      "bun:sqlite": bunSqliteShimPath,
-      "bun-pty": bunPtyShimPath,
-    }),
-    nodePolyfills({
-      include: [
-        "path",
-        "util",
-        "stream",
-        "events",
-        "buffer",
-        "url",
-        "string_decoder",
-        "querystring",
-        "crypto",
-        "assert",
-        "http",
-        "https",
-        "net",
-        "tls",
-        "zlib",
-        "tty",
-      ],
-      globals: {
-        Buffer: true,
-        global: true,
-        process: true,
-      },
-    }),
-  ],
-  define: {
-    OPENCODE_VERSION: JSON.stringify("browser-0.0.1"),
-    OPENCODE_CHANNEL: JSON.stringify("browser"),
-    OPENCODE_MIGRATIONS: JSON.stringify(opencodeMigrations),
-    "process.env.NODE_ENV": JSON.stringify("production"),
-  },
-  resolve: {
-    alias: {
-      // OpenCode source imports
-      "opencode": path.resolve(__dirname, "../opencode/src"),
-      "@": path.resolve(__dirname, "src"),
-
-      // === Native module shims ===
-
-      // Database: bun:sqlite / #db → sql.js shim
-      "#db": path.resolve(__dirname, "src/shims/db.browser.ts"),
-      "bun:bundle": bunBundleShimPath,
-      "bun:sqlite": bunSqliteShimPath,
-      "drizzle-orm/bun-sqlite": path.resolve(__dirname, "src/shims/drizzle-bun-sqlite.browser.ts"),
-      "drizzle-orm/bun-sqlite/migrator": path.resolve(__dirname, "src/shims/drizzle-bun-sqlite-migrator.browser.ts"),
-
-      // PTY: bun-pty → stub
-      "bun-pty": bunPtyShimPath,
-
-      // File watching → stub
-      "@parcel/watcher": path.resolve(__dirname, "src/shims/watcher.browser.ts"),
-      "chokidar": path.resolve(__dirname, "src/shims/watcher.browser.ts"),
-
-      // XDG paths → browser shim
-      "xdg-basedir": path.resolve(__dirname, "src/shims/xdg.browser.ts"),
-
-      // Clipboard → navigator.clipboard
-      "clipboardy": path.resolve(__dirname, "src/shims/clipboard.browser.ts"),
-
-      // Open → window.open
-      "open": path.resolve(__dirname, "src/shims/open.browser.ts"),
-
-      // Effect platform-node → browser stubs
-      "@effect/platform-node": path.resolve(__dirname, "src/shims/effect-platform-node.browser.ts"),
-
-      // Node modules that need browser shims
-      "async_hooks": path.resolve(__dirname, "src/shims/async-hooks.browser.ts"),
-      "os": path.resolve(__dirname, "src/shims/os.browser.ts"),
-      "node:os": path.resolve(__dirname, "src/shims/os.browser.ts"),
-      "fs/promises": path.resolve(__dirname, "src/shims/fs.browser.ts"),
-      "node:fs/promises": path.resolve(__dirname, "src/shims/fs.browser.ts"),
-      "node:fs": path.resolve(__dirname, "src/shims/fs-sync.browser.ts"),
-      "fs": path.resolve(__dirname, "src/shims/fs-sync.browser.ts"),
-      "node:child_process": path.resolve(__dirname, "src/shims/child-process.browser.ts"),
-      "child_process": path.resolve(__dirname, "src/shims/child-process.browser.ts"),
-
-      // Cross-spawn → stub
-      "cross-spawn": path.resolve(__dirname, "src/shims/cross-spawn.browser.ts"),
-
-      // Which → stub
-      "which": path.resolve(__dirname, "src/shims/which.browser.ts"),
-
-      // Bonjour → stub
-      "bonjour-service": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Tree-sitter → stub
-      "tree-sitter-bash": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "web-tree-sitter": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Yargs → stub (not needed in browser)
-      "yargs": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Hono/bun websocket → stub
-      "hono/bun": path.resolve(__dirname, "src/shims/hono-bun.browser.ts"),
-
-      // Glob → browser shim
-      "glob": path.resolve(__dirname, "src/shims/glob.browser.ts"),
-
-      // Ignore → browser shim
-      "ignore": path.resolve(__dirname, "src/shims/ignore.browser.ts"),
-
-      // Gray matter → browser shim
-      "gray-matter": path.resolve(__dirname, "src/shims/gray-matter.browser.ts"),
-
-      // Mime types
-      "mime-types": path.resolve(__dirname, "src/shims/mime-types.browser.ts"),
-
-      // Zip.js → stub
-      "@zip.js/zip.js": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // JSONRPC → stub
-      "vscode-jsonrpc": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // LSP types → stub
-      "vscode-languageserver-types": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Solid.js → stub (TUI only)
-      "solid-js": path.resolve(__dirname, "src/shims/solid.browser.ts"),
-      "solid-js/store": path.resolve(__dirname, "src/shims/solid.browser.ts"),
-      "@solid-primitives/event-bus": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@solid-primitives/scheduled": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // OpenTUI → stub
-      "@opentui/core": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@opentui/solid": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "opentui-spinner": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Turndown → stub
-      "turndown": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Diff → stub (keep minimal)
-      "diff": path.resolve(__dirname, "src/shims/diff.browser.ts"),
-
-      // @pierre/diffs → stub
-      "@pierre/diffs": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Octokit → stub
-      "@octokit/rest": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@octokit/graphql": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // MCP SDK → stub
-      "@modelcontextprotocol/sdk": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // AWS → stub
-      "@aws-sdk/credential-providers": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Google auth → stub
-      "google-auth-library": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Clack prompts → stub
-      "@clack/prompts": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // OpenAuth → stub
-      "@openauthjs/openauth": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Agent Client Protocol → stub
-      "@agentclientprotocol/sdk": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Semver
-      "semver": path.resolve(__dirname, "src/shims/semver.browser.ts"),
-
-      // Strip ANSI
-      "strip-ansi": path.resolve(__dirname, "src/shims/strip-ansi.browser.ts"),
-
-      // Fuzzysort → stub
-      "fuzzysort": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Minimatch
-      "minimatch": path.resolve(__dirname, "src/shims/minimatch.browser.ts"),
-
-      // Workspace packages → stubs
-      "@opencode-ai/plugin": path.resolve(__dirname, "src/shims/opencode-plugin.browser.ts"),
-      "@opencode-ai/util": path.resolve(__dirname, "src/shims/opencode-util.browser.ts"),
-      "@opencode-ai/sdk": path.resolve(__dirname, "src/shims/opencode-sdk.browser.ts"),
-      "@opencode-ai/script": path.resolve(__dirname, "src/shims/stubs.ts"),
-
-      // Provider SDKs we don't need → stub (only keep anthropic)
-      "@ai-sdk/amazon-bedrock": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/azure": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/cerebras": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/cohere": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/deepinfra": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/gateway": path.resolve(__dirname, "src/shims/ai-sdk-gateway.browser.ts"),
-      "@ai-sdk/google": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/google-vertex": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/groq": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/mistral": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/openai": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/openai-compatible": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/perplexity": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/togetherai": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/vercel": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@ai-sdk/xai": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "@openrouter/ai-sdk-provider": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "ai-gateway-provider": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "gitlab-ai-provider": path.resolve(__dirname, "src/shims/stubs.ts"),
-      "opencode-gitlab-auth": path.resolve(__dirname, "src/shims/stubs.ts"),
+    root: __dirname,
+    base: process.env.BASE_PATH ?? "/opencode/",
+    plugins: [
+      platform(),
+      transform(),
+      snapshot(models),
+      nodePolyfills({
+        include: [
+          "util",
+          "stream",
+          "events",
+          "buffer",
+          "url",
+          "string_decoder",
+          "querystring",
+          "crypto",
+          "assert",
+          "http",
+          "https",
+          "tls",
+          "zlib",
+          "tty",
+          "vm",
+          "constants",
+        ],
+        globals: { Buffer: true, global: true, process: false },
+      }),
+      assets(catalog),
+    ],
+    define: {
+      OPENCODE_VERSION: JSON.stringify(version),
+      OPENTUI_VERSION: JSON.stringify(runtime.version),
+      OPENCODE_CHANNEL: JSON.stringify("browser"),
+      OPENCODE_MIGRATIONS: JSON.stringify(migrations),
     },
-  },
-  optimizeDeps: {
-    include: ["sql.js"],
-    exclude: ["bun:sqlite", "os", "node:os"],
-  },
-  build: {
-    target: "esnext",
-    outDir: "dist",
-    sourcemap: true,
-  },
-  server: {
-    port: 5199,
-  },
+    resolve: {
+      dedupe: ["solid-js"],
+      alias: [
+        ...exports("core"),
+        ...exports("solid"),
+        ...exports("keymap"),
+        { find: /^solid-js(\/.*)?$/, replacement: path.join(__dirname, "node_modules/solid-js$1") },
+        { find: /^#sqlite$/, replacement: shim("sqlite") },
+        { find: /^#fff$/, replacement: path.join(root, "packages/core/src/filesystem/fff.node.ts") },
+        { find: /^bun-pty$/, replacement: shim("pty") },
+        { find: /^node-fetch$/, replacement: shim("fetch") },
+        { find: /^(node:)?process$/, replacement: path.join(shims, "process.ts") },
+        { find: /^(node:)?path\/win32$/, replacement: path.join(__dirname, "node_modules/path-win32/index.js") },
+        { find: /^@aws-sdk\/credential-providers$/, replacement: shim("aws-credentials") },
+        { find: /^@effect\/platform-node\/NodePath$/, replacement: shim("effect-platform-node") },
+        { find: /^@\/(.*)$/, replacement: path.join(root, "packages/opencode/src/$1") },
+        ...Object.entries(aliases).flatMap(([name, file]) => [
+          { find: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`), replacement: shim(file) },
+          ...(!name.includes(":") && !name.startsWith("@")
+            ? [{ find: new RegExp(`^node:${name}$`), replacement: shim(file) }]
+            : []),
+        ]),
+      ],
+      conditions: ["browser", "import", "default"],
+    },
+    optimizeDeps: {
+      include: ["@xterm/xterm", "@xterm/addon-fit", "semver", "yaml", "js-yaml", "path-browserify", "path-win32"],
+      exclude: [
+        "@opentui/core",
+        "@opentui/core/browser",
+        "@opentui/solid",
+        "@opentui/keymap",
+        "opentui-spinner",
+        "opentui-spinner/solid",
+      ],
+    },
+    build: {
+      target: "esnext",
+      outDir: "dist",
+      sourcemap: true,
+      chunkSizeWarningLimit: 1800,
+      commonjsOptions: { requireReturnsDefault: (id) => (id === shim("fs-sync") ? "preferred" : false) },
+      rollupOptions: {
+        input: process.env.BROWSER_QA
+          ? { index: path.join(__dirname, "index.html"), checks: path.join(__dirname, "backend-smoke.html") }
+          : undefined,
+      },
+    },
+    server: { port: 5199, fs: { allow: [root, opentui] } },
   }
 })

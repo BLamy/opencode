@@ -28,7 +28,8 @@ export function StartupLoading(props: { ready: () => boolean }) {
       hold = setTimeout(() => {
         hold = undefined
         setShow(false)
-      }, left).unref()
+      }, left)
+      hold.unref?.()
       return
     }
 
@@ -43,7 +44,8 @@ export function StartupLoading(props: { ready: () => boolean }) {
       wait = undefined
       stamp = Date.now()
       setShow(true)
-    }, 500).unref()
+    }, 500)
+    wait.unref?.()
   })
 
   onCleanup(() => {

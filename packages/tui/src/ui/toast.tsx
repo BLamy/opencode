@@ -64,7 +64,8 @@ function init() {
       if (timeoutHandle) clearTimeout(timeoutHandle)
       timeoutHandle = setTimeout(() => {
         setStore("currentToast", null)
-      }, toastOptions.duration).unref()
+      }, toastOptions.duration)
+      timeoutHandle.unref?.()
     },
     error: (err: any) => {
       if (err instanceof Error)

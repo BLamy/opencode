@@ -12,21 +12,24 @@ test("browser opencode client sends prompt requests to the message endpoint", as
 
   const client = createOpencodeClient({
     baseUrl: "http://localhost:3000",
-    fetch: async (input, init) => {
-      calls.push({
-        url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
-        method: init?.method,
-        headers: init?.headers,
-        body: init?.body,
-      })
+    fetch: Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({
+          url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
+          method: init?.method,
+          headers: init?.headers,
+          body: init?.body,
+        })
 
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-    },
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        })
+      },
+      { preconnect: () => {} },
+    ),
   })
 
   await client.session.prompt({

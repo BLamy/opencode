@@ -36,9 +36,7 @@ export function createWebSocketFetch(options?: CreateWebSocketFetchOptions) {
   const maxConnectionAge = options?.maxConnectionAge ?? DEFAULT_MAX_CONNECTION_AGE
   const streamRetries = options?.streamRetries ?? 5
   const pruneTimer = setInterval(() => prune(), Math.min(idleTimeout, 60_000))
-  if (typeof pruneTimer === "object" && "unref" in pruneTimer && typeof pruneTimer.unref === "function") {
-    pruneTimer.unref()
-  }
+  pruneTimer.unref?.()
 
   async function websocketFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url
