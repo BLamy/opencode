@@ -1,6 +1,7 @@
 import "./styles/terminal.css"
 import { mountOpenCodeTui } from "./tui-bootstrap"
 import { seedDemoProject } from "./seed-project"
+import { mountConnectionDialog } from "./connection-dialog"
 
 declare const OPENCODE_VERSION: string
 declare const OPENTUI_VERSION: string
@@ -13,6 +14,10 @@ document.querySelector<HTMLElement>("#version")!.textContent = `v${OPENCODE_VERS
 
 seedDemoProject()
 const url = params.get("server")
+if (!url) {
+  const disposeConnection = mountConnectionDialog()
+  window.addEventListener("pagehide", disposeConnection, { once: true })
+}
 mountOpenCodeTui({
   container,
   ...(url ? { server: { url: new URL(url).href } } : {}),

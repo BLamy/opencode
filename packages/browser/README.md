@@ -17,7 +17,7 @@ bun install --frozen-lockfile
 bun run --cwd packages/core build:wasm
 bun run --cwd packages/core build:lib
 cd ../../packages/browser
-bun test
+bun run test
 bun run build
 bun run preview
 ```
@@ -38,12 +38,31 @@ Each build fetches the real catalog from `https://models.opencode.ai/api.json` a
 ></iframe>
 ```
 
-The `embed` query removes the host header. The renderer uses a single-threaded WASM runtime, so the frame does not require cross-origin isolation. A sandbox with only `allow-scripts` has an opaque origin and runs real SQLite in memory; a visible “Memory-only storage” notice explains that its sessions last until the frame closes. IndexedDB's `SecurityError` selects the same mode. Quota, corruption, and migration errors remain errors, and existing saved databases are preserved.
+The `embed` query hides the version header and keeps a compact Connection control. The renderer uses a single-threaded WASM runtime, so the frame does not require cross-origin isolation. A sandbox with only `allow-scripts` has an opaque origin and runs real SQLite in memory; a visible “Memory-only storage” notice explains that its sessions last until the frame closes. IndexedDB's `SecurityError` selects the same mode. Quota, corruption, and migration errors remain errors, and existing saved databases are preserved.
 
 The frame emits `{ type: "opencode:ready", version, storage }` after mounting. For an opaque frame, validate `event.source` against that iframe's `contentWindow`; its `event.origin` is `"null"`. For ordinary frames, also validate the expected origin. Top-level browsing retains IndexedDB persistence and the safe legacy upgrade path.
 
 For an AlmostNode host, import `mountOpenCodeTui` from `src/tui-bootstrap.ts`, pass a container plus its `workspaceBridge` and `processBridge`, and call `dispose()` when unmounting. Real SDK responses and streaming events stay within the page's embedded handler. An optional `server` option (or `?server=https://…`) can attach the same TUI to an existing compatible server.
 
-Provider requests use the actual OpenCode provider implementations. Configure credentials through OpenCode's connection UI; API requests are not made by startup tests. Providers must permit browser requests or be accessed through a user-controlled gateway. Native AWS credential profiles need a host credential provider; browser hosts can supply explicit credentials or a Bedrock bearer token.
+Provider requests use the actual OpenCode provider implementations. Configure credentials through OpenCode's connection UI; API requests are not made by startup tests. The connection dialog routes device authorization, token refresh, and provider requests through the chosen Tailscale exit node or Cloudflare CORS proxy. Native AWS credential profiles need a host credential provider; browser hosts can supply explicit credentials or a Bedrock bearer token.
 
 The `Browser and GitHub Pages` workflow builds the pinned runtime, tests SQLite and platform services, and deploys the complete static application. Native workflows and the browser build share the current Core, Server, SDK, and TUI source.
+
+## OpenTUI spinner compatibility
+
+`opentui-spinner@0.0.7` still targets OpenTUI 0.3. The tracked Bun patch migrates its frame encoding to an `OptimizedBuffer` owned by the renderer's native scene, releases its Unicode frames and buffer on destruction, and treats timer `unref()` as optional in browsers. This keeps the real loading animation active during message submission on both native and WASM renderers.
+
+The Pages workflow runs `packages/tui/test/cli/tui/spinner.test.ts` against the installed OpenTUI 0.8 renderer before deployment. When updating the dependency, retain that regression check until upstream supports the owned Unicode API and browser timer handles.
+
+## Browser connection and device login
+
+The page opens a connection dialog before provider traffic is allowed. You can explore the local workspace offline and reopen the dialog using **Connection**.
+
+- **Private with Tailscale:** the same framework-neutral controller and WASM adapter used by `brett_lamy/ui`, pinned in `src/vendor/tailscale`. Connect this tab interactively, approve the device if your tailnet requires it, and select an online exit node. DNS lookups also travel through the exit node. This path fails closed when disconnected and never falls back to the public proxy. The current Go/WASM fetch buffers response bodies; cancelled requests stop being read, but the underlying Go request may finish in the background.
+- **Cloudflare CORS proxy:** explicitly select Brett's existing Worker at `https://bl-cors-proxy.brett-lamy.workers.dev/?url=`. It forwards provider HTTP headers and bodies and preserves streamed responses. Tokens and prompts pass through the relay; its [source](https://github.com/BLamy/ui/blob/67d298b4d0f20cf0ae677036cfbed2d2d4ca55dd/workers/cors-proxy/src/index.ts) does not log or store them. The relay allows `https://blamy.github.io` and local development origins. Opaque sandbox frames must open the full demo to use it.
+
+After choosing a connection, use `/connect`, **OpenAI**, then **ChatGPT Pro/Plus (headless)**. Complete the device-code approval yourself at the displayed OpenAI URL. OpenCode's existing OAuth plugin handles the exchange and refresh. The native loopback callback method is omitted in the browser build, so device login is the default ChatGPT choice. No shared API key or account token is bundled into the site. Provider credentials and Tailscale node keys remain in the tab's in-memory filesystem/controller, so a reload requires another sign-in. SQLite conversation persistence is separate from credentials.
+
+Vite injects the selected transport lexically into the provider factory and bundled auth plugins. The browser uses HTTP streaming for ChatGPT, with the experimental native WebSocket path disabled. It does not replace global fetch: assets, Tailscale control/DERP traffic, and the embedded HTTP SDK keep their own paths. Native OpenCode continues using its standard network implementation. The browser HTTP handler also installs OpenCode's instance-disposal middleware so models reload immediately after credentials change.
+
+Run `bun run test` for browser storage/platform/transport checks and `BROWSER_QA=1 bun run build` to include `backend-smoke.html`. The compiled smoke page checks real routes, shared SQLite, post-login provider discovery, instance reloads, and SSE without making model requests.

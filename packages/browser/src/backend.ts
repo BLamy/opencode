@@ -15,6 +15,7 @@ import { NodeChildProcessSpawner, NodeFileSystem } from "./shims/effect-platform
 import { BrowserSqlite } from "./sqlite"
 import { BrowserLegacyDatabase } from "./legacy-database"
 import { HttpApiApp } from "../../opencode/src/server/routes/instance/httpapi/server"
+import { disposeMiddleware } from "../../opencode/src/server/routes/instance/httpapi/lifecycle"
 import { PluginServerTransport } from "../../opencode/src/plugin/server-transport"
 import type { BrowserStorage } from "./storage"
 
@@ -116,7 +117,7 @@ export async function createBrowserBackend(options: BrowserBackendOptions = {}) 
         Layer.merge(Layer.succeed(References.MinimumLogLevel, "Info")),
       ),
     }),
-    { disableLogger: true },
+    { disableLogger: true, middleware: disposeMiddleware },
   )
 
   try {

@@ -85,6 +85,53 @@ async function run() {
       const body = await json("/config")
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Expected configuration object")
     })
+    await check("Instance disposal reloads changed project configuration", async () => {
+      const { _vfs_setFile } = await import("./shims/fs.browser")
+      _vfs_setFile("/workspace/opencode.json", JSON.stringify({ model: "opencode/big-pickle" }))
+      await request("/instance/dispose", { method: "POST" })
+      const body = await json("/config")
+      if (!body || typeof body !== "object" || !("model" in body) || body.model !== "opencode/big-pickle")
+        throw new Error("The instance returned cached configuration after disposal")
+    })
+    await check("Provider credentials become visible after the post-login instance disposal", async () => {
+      try {
+        await request("/auth/openai", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "api", key: "browser-test-not-a-real-api-key" }),
+        })
+        await request("/instance/dispose", { method: "POST" })
+        const body = await json("/provider")
+        if (
+          !body ||
+          typeof body !== "object" ||
+          !("connected" in body) ||
+          !Array.isArray(body.connected) ||
+          !body.connected.includes("openai")
+        )
+          throw new Error("The provider list did not reload the new credential")
+        const models = await json("/config/providers")
+        if (
+          !models ||
+          typeof models !== "object" ||
+          !("providers" in models) ||
+          !Array.isArray(models.providers) ||
+          !models.providers.some((provider) => provider?.id === "openai")
+        )
+          throw new Error("The model selector did not reload the connected provider")
+      } finally {
+        await request("/auth/openai", { method: "DELETE" })
+        await request("/instance/dispose", { method: "POST" })
+      }
+    })
+    await check("Browser ChatGPT login offers device auth instead of a native callback server", async () => {
+      const body = await json("/provider/auth")
+      const methods = body && typeof body === "object" && "openai" in body ? body.openai : undefined
+      if (!Array.isArray(methods) || !methods.some((method) => method.label === "ChatGPT Pro/Plus (headless)"))
+        throw new Error("ChatGPT device authorization is missing")
+      if (methods.some((method) => method.label === "ChatGPT Pro/Plus (browser)"))
+        throw new Error("The browser offered an unsupported native OAuth callback server")
+    })
     await check("GET /agent", async () => {
       if (!Array.isArray(await json("/agent"))) throw new Error("Expected real agent list")
     })

@@ -1,3 +1,4 @@
+import { useAnimationFrame } from "../util/animation-frame"
 import {
   InputRenderable,
   RGBA,
@@ -78,6 +79,7 @@ export type DialogSelectRef<T> = {
 }
 
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
+  const scheduleFrame = useAnimationFrame()
   type Action = NonNullable<DialogSelectProps<T>["actions"]>[number]
   type FooterHint = NonNullable<DialogSelectProps<T>["footerHints"]>[number]
   type VisibleAction = (Action & { label: string }) | FooterHint
@@ -250,8 +252,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           if (!moved) return
           const value = option.value
           const generation = ++visibilityGeneration
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
+          scheduleFrame(() => {
+            scheduleFrame(() => {
               if (generation !== visibilityGeneration) return
               if (!props.preserveSelection || store.filter.length > 0) return
               if (!isDeepEqual(selected()?.value, value)) return

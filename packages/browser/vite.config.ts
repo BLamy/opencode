@@ -47,6 +47,40 @@ function platform(): Plugin {
   return {
     name: "opentui-browser-platform",
     enforce: "pre",
+    transform(code, id) {
+      const source = id.split("?")[0]
+      const provider = source === path.join(root, "packages/opencode/src/provider/provider.ts")
+      const auth =
+        source.startsWith(path.join(root, "packages/opencode/src/plugin/")) &&
+        !["server-transport.ts", "openai/ws-pool.ts"].some(
+          (file) => source === path.join(root, "packages/opencode/src/plugin", file),
+        )
+      const bundledAuth = /\/node_modules\/(opencode-gitlab-auth|opencode-poe-auth)\//.test(source)
+      if ((!provider && !auth && !bundledAuth) || !/\bfetch\b/.test(code)) return
+      if (source === path.join(root, "packages/opencode/src/plugin/openai/codex.ts")) {
+        const signature = "export async function CodexAuthPlugin("
+        if (!code.includes(signature)) this.error("Codex auth entry changed; update the browser device-auth adapter")
+        code =
+          code.replace(signature, "async function createCodexAuthPlugin(") +
+          `
+export async function CodexAuthPlugin(...args: Parameters<typeof createCodexAuthPlugin>): Promise<Hooks> {
+  const hooks = await createCodexAuthPlugin(args[0], { ...args[1], experimentalWebSockets: false })
+  return {
+    ...hooks,
+    auth: hooks.auth ? {
+      ...hooks.auth,
+      methods: hooks.auth.methods.filter((method) => method.label !== "ChatGPT Pro/Plus (browser)"),
+    } : undefined,
+  }
+}
+`
+      }
+      // A lexical browser-only fetch keeps the native plugin and the global browser network unchanged.
+      return {
+        code: `import { fetch } from ${JSON.stringify(path.join(__dirname, "src/provider-network.ts"))}\n${code}`,
+        map: null,
+      }
+    },
     resolveId(source, importer) {
       if (source === "opencode-web-ui.gen.ts") return { id: source, external: true }
       if (source.endsWith(".wasm")) return this.resolve(source + "?url", importer, { skipSelf: true })

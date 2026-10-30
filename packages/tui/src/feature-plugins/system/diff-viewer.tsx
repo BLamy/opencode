@@ -1,4 +1,5 @@
 /** @jsxImportSource @opentui/solid */
+import { useAnimationFrame } from "../../util/animation-frame"
 import type { TuiPlugin, TuiPluginApi, TuiRouteCurrent } from "@opencode-ai/plugin/tui"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import {
@@ -89,6 +90,7 @@ function diffSourceLabel(mode: DiffMode) {
 }
 
 function DiffViewer(props: { api: TuiPluginApi }) {
+  const scheduleFrame = useAnimationFrame()
   const dimensions = useTerminalDimensions()
   const themeState = useTheme()
   const theme = () => props.api.theme.current
@@ -211,7 +213,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   }
 
   const scrollPatchNodeToTop = (patchNode: BoxRenderable) => {
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       if (!scroll) return
       const scrollDelta = patchNode.y - scroll.viewport.y
       const contentY = scroll.scrollTop + scrollDelta
@@ -341,10 +343,10 @@ function DiffViewer(props: { api: TuiPluginApi }) {
 
   const scrollToPatchFileIndexAfterRender = (fileIndex: number) => {
     setPendingPatchScrollFileIndex(fileIndex)
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       const patchNode = patchNodeByFileIndex.get(fileIndex)
       if (patchNode) scrollPatchNodeToTop(patchNode)
-      requestAnimationFrame(() => {
+      scheduleFrame(() => {
         const patchNode = patchNodeByFileIndex.get(fileIndex)
         if (patchNode) scrollPatchNodeToTop(patchNode)
         setPendingPatchScrollFileIndex(undefined)
@@ -353,14 +355,14 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   }
 
   const scrollSinglePatchToTop = () => {
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       scroll?.scrollTo(0)
-      requestAnimationFrame(() => scroll?.scrollTo(0))
+      scheduleFrame(() => scroll?.scrollTo(0))
     })
   }
 
   const measurePatchFiller = () => {
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       if (!scroll) return
       const entries = visiblePatchFiles()
         .map((entry) => patchNodeByFileIndex.get(entry.fileIndex))
@@ -380,9 +382,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     patchNodeByFileIndex.set(fileIndex, element)
     measurePatchFiller()
     if (pendingPatchScrollFileIndex() !== fileIndex) return
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       scrollPatchNodeToTop(element)
-      requestAnimationFrame(() => {
+      scheduleFrame(() => {
         scrollPatchNodeToTop(element)
         setPendingPatchScrollFileIndex(undefined)
       })

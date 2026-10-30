@@ -1,4 +1,5 @@
 /** @jsxImportSource @opentui/solid */
+import { useAnimationFrame } from "../../util/animation-frame"
 import type { ColorInput, RGBA, ScrollBoxRenderable } from "@opentui/core"
 import { Locale } from "../../util/locale"
 import { tint } from "../../context/theme"
@@ -35,6 +36,7 @@ export type DiffViewerFileTreeProps = {
 }
 
 export function DiffViewerFileTree(props: DiffViewerFileTreeProps) {
+  const scheduleFrame = useAnimationFrame()
   const tree = createMemo(() => buildFileTree(props.files))
   const rows = createMemo(() => flattenFileTree(tree(), props.expandedNodes))
   let scroll: ScrollBoxRenderable | undefined
@@ -46,7 +48,7 @@ export function DiffViewerFileTree(props: DiffViewerFileTreeProps) {
     if (selectedIndex === -1) return
     const scrollSelectedIntoView = () => scrollFileTreeRowIntoView(scroll, selectedIndex)
     scrollSelectedIntoView()
-    requestAnimationFrame(scrollSelectedIntoView)
+    scheduleFrame(scrollSelectedIntoView)
   })
 
   const fadedColor = () => tint(props.theme.text, props.theme.background, 0.75)

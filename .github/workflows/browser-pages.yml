@@ -50,6 +50,9 @@ jobs:
       - name: Test browser runtime services
         working-directory: packages/browser
         run: bun run test
+      - name: Test TUI loading animation
+        working-directory: packages/tui
+        run: bun test test/cli/tui/spinner.test.ts
       - name: Typecheck browser and current TUI
         working-directory: packages/browser
         env:
