@@ -2,7 +2,7 @@ import { loadBrowserRenderLib } from "@opentui/core/browser"
 
 // Install process/Buffer and the native WASM backend before evaluating app
 // dependencies, including Node-compatible streams used by the terminal host.
-const base = new URL(import.meta.env.BASE_URL + "opentui/", window.location.origin)
+const base = new URL("opentui/", document.baseURI)
 loadBrowserRenderLib({
   wasm: new URL("opentui.wasm", base),
   assets: {

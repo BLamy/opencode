@@ -49,6 +49,13 @@ function platform(): Plugin {
     enforce: "pre",
     transform(code, id) {
       const source = id.split("?")[0]
+      if (source.endsWith("/@agent-wasm/tailscale-connect/pkg.js")) {
+        if (!code.includes("fetch(wasmURL)")) this.error("Tailscale WASM loader changed")
+        return {
+          code: `import { browserFetch } from ${JSON.stringify(path.join(__dirname, "src/browser-fetch.ts"))}\n` + code.replace("fetch(wasmURL)", "browserFetch(wasmURL)"),
+          map: null,
+        }
+      }
       if (source.startsWith(path.join(root, "packages/"))) {
         code = code.replace(
           /import\s*\{([^}]+)\}\s*from\s*["'](?:node:)?crypto["']/g,
@@ -287,7 +294,7 @@ export default defineConfig(async () => {
   }
   return {
     root: __dirname,
-    base: process.env.BASE_PATH ?? "/opencode/",
+    base: process.env.BASE_PATH ?? "./",
     plugins: [
       platform(),
       transform(),
@@ -362,13 +369,16 @@ export default defineConfig(async () => {
       chunkSizeWarningLimit: 1800,
       commonjsOptions: { requireReturnsDefault: (id) => (id === shim("fs-sync") ? "preferred" : false) },
       rollupOptions: {
+        preserveEntrySignatures: "exports-only",
         input: process.env.BROWSER_QA
           ? {
               index: path.join(__dirname, "index.html"),
+              runtime: path.join(__dirname, "src/runtime.ts"),
               checks: path.join(__dirname, "backend-smoke.html"),
               embed: path.join(__dirname, "embed-smoke.html"),
             }
-          : undefined,
+          : { index: path.join(__dirname, "index.html"), runtime: path.join(__dirname, "src/runtime.ts") },
+        output: { entryFileNames: (chunk) => chunk.isEntry && chunk.name === "runtime" ? "runtime.js" : "assets/[name]-[hash].js" },
       },
     },
     server: { port: 5199, fs: { allow: [root, opentui] } },

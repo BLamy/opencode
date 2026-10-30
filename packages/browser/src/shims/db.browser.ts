@@ -1,4 +1,5 @@
 // Browser database initialization using sql.js (WASM SQLite)
+import { browserFetch } from "../browser-fetch"
 import type { Database as SqlJsDatabase, SqlJsStatic } from "sql.js"
 import sqlJsLoaderUrl from "sql.js/dist/sql-wasm.js?url"
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url"
@@ -8,7 +9,7 @@ let _SQL: SqlJsStatic | null = null
 let _loaderPromise: Promise<InitSqlJs> | null = null
 let _dbPromise: Promise<SqlJsDatabase> | null = null
 
-type InitSqlJs = (config?: { locateFile?: (file: string) => string }) => Promise<SqlJsStatic>
+type InitSqlJs = (config?: { locateFile?: (file: string) => string; wasmBinary?: ArrayBuffer }) => Promise<SqlJsStatic>
 
 function getInitSqlJs(): InitSqlJs | undefined {
   const candidate = (globalThis as unknown as { initSqlJs?: InitSqlJs }).initSqlJs
@@ -29,6 +30,8 @@ function loadSqlJs(): Promise<InitSqlJs> {
     const script = document.createElement("script")
     script.src = sqlJsLoaderUrl
     script.async = true
+    script.crossOrigin = "anonymous"
+    script.referrerPolicy = "no-referrer"
     script.dataset.sqlJsLoader = "true"
     script.onload = () => {
       const initSqlJs = getInitSqlJs()
@@ -54,6 +57,9 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
   _dbPromise = (async () => {
     const originalProcess = globalThis.process
     const initSqlJs = await loadSqlJs()
+    const response = await browserFetch(sqlWasmUrl)
+    if (!response.ok) throw new Error(`Failed to load SQLite WASM: ${response.status}`)
+    const wasmBinary = await response.arrayBuffer()
 
     try {
       // sql.js detects Node by checking process.versions.node. Our browser shell
@@ -64,6 +70,7 @@ export async function initBrowserDB(): Promise<SqlJsDatabase> {
 
       _SQL = await initSqlJs({
         locateFile: () => sqlWasmUrl,
+        wasmBinary,
       })
     } finally {
       if (originalProcess) {

@@ -31,7 +31,7 @@ async function check<T>(name: string, test: () => Promise<T>) {
 
 async function run() {
   const { loadBrowserRenderLib } = await import("@opentui/core/browser")
-  const base = new URL(import.meta.env.BASE_URL + "opentui/", window.location.origin)
+  const base = new URL("opentui/", document.baseURI)
   await loadBrowserRenderLib({
     wasm: new URL("opentui.wasm", base),
     assets: {
@@ -139,3 +139,5 @@ run().catch((error) => {
   document.body.dataset.state = "fail"
   status.textContent = errorDetails(error)
 })
+
+export {}

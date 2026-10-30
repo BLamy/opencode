@@ -22,7 +22,7 @@ bun run build
 bun run preview
 ```
 
-The default base path is `/opencode/`, matching GitHub Pages. Set `BASE_PATH=/` to serve at the origin root. The build includes the renderer WASM, tree-sitter worker, parser WASM, and syntax assets under `opentui/`; SQLite assets are fingerprinted by Vite.
+The build uses relative asset URLs, so the standalone page and public runtime module work at `/opencode/` on GitHub Pages and under other host paths. `BASE_PATH` can override the build base. The build includes the renderer WASM, tree-sitter worker, parser WASM, and syntax assets under `opentui/`; SQLite assets are fingerprinted by Vite.
 
 Each build fetches the real catalog from `https://models.opencode.ai/api.json` and includes it through OpenCode's standard model snapshot option so initial provider discovery also works offline. `build-info.json` records the catalog ETag and retrieval time alongside the exact release and runtime commits.
 
@@ -43,7 +43,26 @@ The `embed` query hides the version header and keeps a compact Connection contro
 
 The frame emits `{ type: "opencode:ready", version, storage }` after mounting. For an opaque frame, validate `event.source` against that iframe's `contentWindow`; its `event.origin` is `"null"`. For ordinary frames, also validate the expected origin. Top-level browsing uses the same memory-only credential boundary.
 
-For an AlmostNode host, import `mountOpenCodeTui` from `src/tui-bootstrap.ts`, pass a container plus its `workspaceBridge` and `processBridge`, and call `dispose()` when unmounting. Real SDK responses and streaming events stay within the page's embedded handler. An optional `server` option (or `?server=https://…`) can attach the same TUI to an existing compatible server.
+The build also publishes `runtime.js`, a stable ES module for a host application:
+
+```ts
+const { mount, version } = await import("https://blamy.github.io/opencode/runtime.js")
+const session = await mount({
+  container: terminalElement,
+  connectionContainer: toolbarElement,
+  directory: host.directory,
+  workspaceBridge: host.workspaceBridge,
+  processBridge: host.processBridge,
+})
+// On unmount:
+session.dispose()
+```
+
+`@brett_lamy/ui/opencode` supplies the React component and `createAlmostNodeOpenCodeHost` / `createAgentWasmOpenCodeHost` adapters. HTTP app ports use AlmostNode's unchanged service worker and the same container's `ServerBridge`. The isolated preview frame receives a MessagePort connected to the host; app responses stay in the browser. The preview worker/bootstrap source lives in the UI fork's `workers/cors-proxy` directory. One embedded OpenCode runtime can run per document because upstream uses document-wide terminal state.
+
+Workspace files go through the supplied bridge; `/opencode/*` private state stays in the in-memory VFS. Application assets use the browser transport saved by AlmostNode before it installs its legacy global fetch wrapper. Provider requests still require the explicit Connection choice.
+
+For source integrations, import `mountOpenCodeTui` from `src/tui-bootstrap.ts` and call `dispose()` when unmounting. Real SDK responses and streaming events stay within the page's embedded handler. An optional `server` option (or `?server=https://…`) can attach the same TUI to an existing compatible server.
 
 Provider requests use the actual OpenCode provider implementations. Configure credentials through OpenCode's connection UI; API requests are not made by startup tests. The connection dialog routes device authorization, token refresh, and provider requests through the chosen Tailscale exit node or Cloudflare CORS proxy. Native AWS credential profiles need a host credential provider; browser hosts can supply explicit credentials or a Bedrock bearer token.
 

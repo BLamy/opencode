@@ -1,7 +1,7 @@
 import { getProviderConnection, onProviderConnection, setProviderConnection } from "./provider-network"
 import type { Tailscale } from "./vendor/tailscale/tailscale"
 
-export function mountConnectionDialog() {
+export function mountConnectionDialog(options: { container?: HTMLElement; autoOpen?: boolean } = {}) {
   const dialog = document.createElement("dialog")
   dialog.id = "connection-dialog"
   dialog.setAttribute("aria-labelledby", "connection-title")
@@ -53,7 +53,7 @@ export function mountConnectionDialog() {
   button.id = "connection-button"
   button.type = "button"
   button.setAttribute("aria-haspopup", "dialog")
-  document.querySelector("#status-bar")!.append(button)
+  ;(options.container ?? document.querySelector("#status-bar")!).append(button)
   const open = (event?: Event) => {
     if (!dialog.open) dialog.showModal()
     if (event instanceof CustomEvent && typeof event.detail === "string") status.textContent = event.detail
@@ -204,7 +204,7 @@ export function mountConnectionDialog() {
       "This sandbox hides its origin and blocks sign-in popups. Use the preview toolbar’s Open demo link, or open https://blamy.github.io/opencode/ in a new tab, to connect."
     find("#proxy-use").after(note)
   }
-  open()
+  if (options.autoOpen !== false) open()
   return () => {
     unsubscribe()
     unsubscribeTailnet?.()

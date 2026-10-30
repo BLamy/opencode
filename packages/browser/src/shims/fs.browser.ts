@@ -215,20 +215,16 @@ function isWorkspacePath(path: string): boolean {
   return Array.from(roots).some((root) => path === root || path.startsWith(`${root}/`))
 }
 
-function isBridgedPath(path: string): boolean {
-  return path === "/opencode" || path.startsWith("/opencode/")
-}
-
 function getWorkspaceBridge(path: string): BrowserWorkspaceBridge | null {
   // Registered per-root bridges win: the path's own namespace prefix is the
   // only routing key that stays correct under interleaved requests from
   // multiple sandboxes. The ambient scope/global remains the fallback for
-  // un-namespaced paths (e.g. /opencode/* internals).
+  // workspace aliases. OpenCode internals stay in the private in-memory VFS.
   const registered = resolveWorkspaceBridgeByPath(path)
   if (registered) return registered
   const bridge = scopedWorkspaceScope.getStore()?.bridge ?? workspaceBridge
   if (!bridge) return null
-  return isWorkspacePath(path) || isBridgedPath(path) ? bridge : null
+  return isWorkspacePath(path) ? bridge : null
 }
 
 function createDirent(name: string, type: "file" | "directory"): BrowserWorkspaceDirent {

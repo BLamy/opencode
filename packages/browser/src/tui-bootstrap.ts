@@ -46,6 +46,7 @@ export interface MountOpenCodeTuiOptions {
   workspaceBridge?: BrowserWorkspaceBridge
   processBridge?: BrowserProcessBridge
   wasmUrl?: string | URL
+  assetBaseUrl?: string | URL
   directory?: string
   args?: Args
   env?: BrowserTuiEnvironment
@@ -384,7 +385,7 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
       cleanups.push(() => unregisterProcessBridgeForRoot(directory, options.processBridge!))
     }
 
-    const base = new URL(import.meta.env.BASE_URL + "opentui/", window.location.origin)
+    const base = new URL(options.assetBaseUrl ?? "../opentui/", import.meta.url)
     await loadBrowserRenderLib({
       wasm: options.wasmUrl ?? new URL("opentui.wasm", base),
       assets: {

@@ -1,3 +1,4 @@
+import { browserFetch } from "./browser-fetch"
 import type { Tailscale } from "./vendor/tailscale/tailscale"
 import { toResponse, toTailscaleRequest } from "./vendor/tailscale/tailscale"
 
@@ -111,6 +112,6 @@ export function showConnectionMessage(message?: string) {
 
 export const fetch = createProviderFetch({
   connection: getProviderConnection,
-  direct: globalThis.fetch.bind(globalThis),
+  direct: browserFetch,
   onUnavailable: showConnectionMessage,
 })
