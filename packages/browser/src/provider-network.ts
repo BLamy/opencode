@@ -99,9 +99,12 @@ export function onProviderConnection(listener: () => void) {
 
 // Vite imports this fetch lexically into the provider factory and bundled auth plugins.
 // Native OpenCode keeps its normal fetch; the browser never replaces globalThis.fetch.
+export function showConnectionMessage(message?: string) {
+  window.dispatchEvent(new CustomEvent("opencode:connection-required", { detail: message }))
+}
+
 export const fetch = createProviderFetch({
   connection: getProviderConnection,
   direct: globalThis.fetch.bind(globalThis),
-  onUnavailable: (message) =>
-    window.dispatchEvent(new CustomEvent("opencode:connection-required", { detail: message })),
+  onUnavailable: showConnectionMessage,
 })

@@ -49,6 +49,33 @@ function platform(): Plugin {
     enforce: "pre",
     transform(code, id) {
       const source = id.split("?")[0]
+      if (source.includes("/node_modules/bun-ffi-structs/") && code.includes("var backend = await loadBackend();")) {
+        return {
+          code:
+            'import browserStructFfi from "virtual:opentui-struct-ffi"\n' +
+            code.replace("var backend = await loadBackend();", "var backend = browserStructFfi;"),
+          map: null,
+        }
+      }
+      if (source === path.join(root, "packages/opencode/src/session/retry.ts")) {
+        const marker = '    if (error.data.responseBody?.includes("FreeUsageLimitError")) {'
+        if (!code.includes(marker))
+          this.error("OpenCode's usage-limit retry policy changed; update the browser adapter")
+        return {
+          code:
+            `import { showConnectionMessage } from ${JSON.stringify(path.join(__dirname, "src/provider-network.ts"))}\n` +
+            code.replace(
+              marker,
+              `
+    if (error.data.responseBody?.includes("FreeUsageLimitError") || error.data.responseBody?.includes("GoUsageLimitError")) {
+      showConnectionMessage("This model's usage allowance is exhausted. Use /connect to sign in to OpenAI or another provider, then select that model. Switching the network connection does not remove the provider's limit.")
+      return undefined
+    }
+` + marker,
+            ),
+          map: null,
+        }
+      }
       const provider = source === path.join(root, "packages/opencode/src/provider/provider.ts")
       const auth =
         source.startsWith(path.join(root, "packages/opencode/src/plugin/")) &&
@@ -81,7 +108,12 @@ export async function CodexAuthPlugin(...args: Parameters<typeof createCodexAuth
         map: null,
       }
     },
+    load(id) {
+      if (id === "\0opentui-struct-ffi")
+        return `import { ptr, toArrayBuffer } from ${JSON.stringify(path.join(core, "src/platform/ffi.ts"))}; export default { ptr, toArrayBuffer };`
+    },
     resolveId(source, importer) {
+      if (source === "virtual:opentui-struct-ffi") return "\0opentui-struct-ffi"
       if (source === "opencode-web-ui.gen.ts") return { id: source, external: true }
       if (source.endsWith(".wasm")) return this.resolve(source + "?url", importer, { skipSelf: true })
       if (/stream-browserify\/(promises|consumers)$/.test(source))
@@ -144,10 +176,12 @@ function snapshot(models: unknown): Plugin {
       if (!code.includes("declare const OPENCODE_MODELS_DEV:"))
         this.error("OpenCode's model snapshot integration changed; update the browser snapshot loader")
       return {
-        code: code.replace(
-          "declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined",
-          'import OPENCODE_MODELS_DEV from "virtual:opencode-model-catalog"',
-        ),
+        code: code
+          .replaceAll("Flag.OPENCODE_DISABLE_MODELS_FETCH", "true")
+          .replace(
+            "declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined",
+            'import OPENCODE_MODELS_DEV from "virtual:opencode-model-catalog"',
+          ),
         map: null,
       }
     },
