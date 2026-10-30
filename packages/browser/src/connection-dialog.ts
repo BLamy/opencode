@@ -54,8 +54,9 @@ export function mountConnectionDialog() {
   button.type = "button"
   button.setAttribute("aria-haspopup", "dialog")
   document.querySelector("#status-bar")!.append(button)
-  const open = () => {
+  const open = (event?: Event) => {
     if (!dialog.open) dialog.showModal()
+    if (event instanceof CustomEvent && typeof event.detail === "string") status.textContent = event.detail
   }
   const close = () => dialog.close()
   const report = (error: unknown) => {

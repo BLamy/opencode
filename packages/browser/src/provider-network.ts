@@ -11,7 +11,7 @@ export type ProviderConnection =
 export function createProviderFetch(options: {
   connection: () => ProviderConnection
   direct: typeof globalThis.fetch
-  onUnavailable?: () => void
+  onUnavailable?: (message?: string) => void
   proxy?: string
 }): typeof globalThis.fetch {
   return Object.assign(
@@ -30,7 +30,7 @@ export function createProviderFetch(options: {
       }
       if (connection.type === "proxy") {
         // Rebuild the request: never send browser cookies to the relay. Streaming responses and cancellation stay native.
-        return options.direct((options.proxy ?? CLOUDFLARE_PROXY) + encodeURIComponent(target.href), {
+        const response = await options.direct((options.proxy ?? CLOUDFLARE_PROXY) + encodeURIComponent(target.href), {
           method: request.method,
           headers: request.headers,
           body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
@@ -38,6 +38,13 @@ export function createProviderFetch(options: {
           credentials: "omit",
           referrerPolicy: "no-referrer",
         })
+        if (response.status === 403 && response.headers.get("content-type")?.includes("text/html")) {
+          const message = `${target.hostname} rejected the Cloudflare relay. Connect Tailscale with an online exit node, then retry your message. Your provider account is still required.`
+          options.onUnavailable?.(message)
+          await response.body?.cancel()
+          return Response.json({ error: { message, type: "browser_connection_error" } }, { status: 403 })
+        }
+        return response
       }
       const snapshot = connection.client.getSnapshot()
       if (
@@ -95,5 +102,6 @@ export function onProviderConnection(listener: () => void) {
 export const fetch = createProviderFetch({
   connection: getProviderConnection,
   direct: globalThis.fetch.bind(globalThis),
-  onUnavailable: () => window.dispatchEvent(new Event("opencode:connection-required")),
+  onUnavailable: (message) =>
+    window.dispatchEvent(new CustomEvent("opencode:connection-required", { detail: message })),
 })

@@ -15,6 +15,13 @@ const server = Bun.serve({
       body: await request.text(),
       cookies: request.headers.get("cookie"),
     })
+    if (request.headers.has("x-quota-test"))
+      return Response.json({ error: { type: "quota_fixture", message: "Fixture quota reached" } }, { status: 429 })
+    if (request.headers.has("x-block-test"))
+      return new Response("<html>Upstream network denied</html>", {
+        status: 403,
+        headers: { "content-type": "text/html" },
+      })
     if (request.headers.has("x-stream-test")) {
       return new Response(
         new ReadableStream<Uint8Array>({
@@ -90,4 +97,23 @@ test("cancelled requests stop before sending credentials", async () => {
     route({ type: "proxy" })("https://auth.openai.com/oauth/token", { signal: AbortSignal.abort() }),
   ).rejects.toThrow()
   expect(requests).toBe(before)
+})
+
+test("an HTML relay rejection gives actionable connection guidance", async () => {
+  const response = await route({ type: "proxy" })("https://chatgpt.com/backend-api/codex/responses", {
+    headers: { "x-block-test": "yes" },
+  })
+  expect(response.status).toBe(403)
+  expect(response.headers.get("content-type")).toInclude("application/json")
+  const body = await response.json()
+  expect(body.error.type).toBe("browser_connection_error")
+  expect(body.error.message).toInclude("Connect Tailscale")
+})
+
+test("provider quota errors are preserved without changing connections", async () => {
+  const response = await route({ type: "proxy" })("https://provider.example/responses", {
+    headers: { "x-quota-test": "yes" },
+  })
+  expect(response.status).toBe(429)
+  expect(await response.json()).toEqual({ error: { type: "quota_fixture", message: "Fixture quota reached" } })
 })
