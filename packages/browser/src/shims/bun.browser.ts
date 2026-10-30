@@ -17,12 +17,12 @@ if (!Buffer.isEncoding("base64url")) {
   const byteLength = Buffer.byteLength
   const isEncoding = Buffer.isEncoding
   Object.assign(Buffer, {
-    from: (...args: unknown[]) => {
+    from: (...args: Parameters<typeof Buffer.from>) => {
       if (args[1] === "base64url") {
         args[1] = "base64"
         if (typeof args[0] === "string") args[0] = args[0].replaceAll("-", "+").replaceAll("_", "/")
       }
-      return Reflect.apply(from, Buffer, args)
+      return from(...args)
     },
   })
   Buffer.prototype.toString = function (encoding?: BufferEncoding, start?: number, end?: number) {
