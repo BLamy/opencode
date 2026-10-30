@@ -30,6 +30,20 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Read browser runtime revision
+        id: runtime
+        run: |
+          echo "repository=$(jq -r .repository packages/browser/opentui.json)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(jq -r .ref packages/browser/opentui.json)" >> "$GITHUB_OUTPUT"
+      - name: Checkout browser runtime source for ABI type checks
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.runtime.outputs.repository }}
+          ref: ${{ steps.runtime.outputs.ref }}
+          path: vendor/opentui
+      - name: Install browser runtime type dependencies
+        working-directory: vendor/opentui
+        run: bun install --frozen-lockfile
       # Local `bun run check` uses `bun check`; CI keeps the official TypeScript compiler as the source of truth.
       - name: Typecheck (TypeScript 7.1)
         run: bun run typecheck:tsc

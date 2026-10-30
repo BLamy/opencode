@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["bun", "vite/client"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "paths": {}
+  },
+  "include": [
+    "src/boot.ts",
+    "src/backend.smoke.ts",
+    "src/embed.smoke.ts",
+    "src/assets.d.ts",
+    "src/provider-network.test.ts",
+    "src/sqlite.test.ts",
+    "src/shims/*.browser.ts"
+  ],
+  "exclude": ["node_modules"]
+}

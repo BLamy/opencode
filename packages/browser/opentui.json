@@ -1,0 +1,11 @@
+{
+  "repository": "BLamy/opentui",
+  "ref": "f6aecb803b7b5f61164dde12e8355d0292896cfc",
+  "version": "0.8.0",
+  "opencode": "dev@ad711440548abaf6eb7f329f72bbce8357a11c2f",
+  "upstream": "ad711440548abaf6eb7f329f72bbce8357a11c2f",
+  "host": {
+    "package": "@agent-wasm/core",
+    "version": "0.4.0"
+  }
+}

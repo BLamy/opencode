@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="The real OpenCode terminal UI, running in your browser with the OpenTUI WebAssembly renderer."
+    />
+    <title>OpenCode Browser</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="status-bar">
+        <a href="https://github.com/BLamy/opencode" target="_blank" rel="noopener noreferrer"
+          >OpenCode <span id="version"></span
+        ></a>
+        <span id="session-info" role="status" aria-live="polite">Starting WebAssembly…</span>
+      </header>
+      <div id="storage-status" role="status" hidden>
+        Memory-only · Sessions and provider credentials are cleared on reload
+      </div>
+      <main id="terminal-container" aria-label="OpenCode terminal" data-state="loading"></main>
+    </div>
+    <script type="module" src="/src/boot.ts"></script>
+  </body>
+</html>

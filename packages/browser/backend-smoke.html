@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenCode browser backend verification</title>
+    <style>
+      body {
+        margin: 2rem;
+        font:
+          15px/1.6 ui-monospace,
+          monospace;
+        background: #101318;
+        color: #e8edf3;
+      }
+      h1 {
+        font-size: 1.3rem;
+      }
+      li {
+        padding: 0.25rem;
+        white-space: pre-wrap;
+      }
+      [data-state="pass"] {
+        color: #8de0a4;
+      }
+      [data-state="fail"] {
+        color: #ff9a9a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OpenCode browser backend verification</h1>
+    <p id="status" role="status">Starting browser runtime…</p>
+    <ol id="results"></ol>
+    <script type="module" src="/src/backend.smoke.ts"></script>
+  </body>
+</html>

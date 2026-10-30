@@ -1,0 +1,8 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "typecheck": { "env": ["OPENTUI_DIR"] },
+    "typecheck:tsc": { "env": ["OPENTUI_DIR"] },
+    "build": { "env": ["OPENTUI_DIR", "BASE_PATH", "BROWSER_QA"] }
+  }
+}

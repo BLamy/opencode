@@ -1,0 +1,261 @@
+// Synchronous fs shim for browser (node:fs compatible).
+// Delegates to the shared browser VFS and optional external workspace bridge.
+
+import { Readable, Writable } from "stream"
+import promises from "./fs.browser"
+import {
+  _vfs_addDir,
+  _vfs_exists,
+  _vfs_getFile,
+  _vfs_isDir,
+  _vfs_readdir,
+  _vfs_remove,
+  _vfs_setFile,
+  _vfs_stat,
+  _vfs_setTimes,
+  type BrowserWorkspaceDirent,
+} from "./fs.browser"
+
+function normalizePath(p: string): string {
+  const parts = p.split("/").filter(Boolean)
+  const resolved: string[] = []
+  for (const part of parts) {
+    if (part === "..") resolved.pop()
+    else if (part !== ".") resolved.push(part)
+  }
+  return "/" + resolved.join("/")
+}
+
+export function watch(): never {
+  throw new Error("File watching is unavailable in the browser workspace")
+}
+
+export function openSync(): never {
+  throw new Error("Native file descriptors are unavailable; use the browser FileSystem service")
+}
+
+export function closeSync(): never {
+  throw new Error("Native file descriptors are unavailable; use the browser FileSystem service")
+}
+
+function enoent(action: string, path: string): Error & { code: "ENOENT" } {
+  const error = new Error(`ENOENT: no such file or directory, ${action} '${path}'`) as Error & { code: "ENOENT" }
+  error.code = "ENOENT"
+  return error
+}
+
+export function readFileSync(path: string, encoding?: string): string | Buffer {
+  const content = _vfs_getFile(path)
+  if (content === undefined) {
+    throw enoent("open", path)
+  }
+
+  return encoding ? content : Buffer.from(content)
+}
+
+export function writeFileSync(path: string, data: string | Uint8Array): void {
+  const content = typeof data === "string" ? data : new TextDecoder().decode(data)
+  _vfs_setFile(path, content)
+}
+
+export function appendFileSync(path: string, data: string | Uint8Array): void {
+  const content = typeof data === "string" ? data : new TextDecoder().decode(data)
+  _vfs_setFile(path, (_vfs_getFile(path) ?? "") + content)
+}
+
+export function existsSync(path: string): boolean {
+  return _vfs_exists(path)
+}
+
+export function mkdirSync(path: string, opts?: { recursive?: boolean }): void {
+  const normalized = normalizePath(path)
+  if (_vfs_exists(normalized)) {
+    if (opts?.recursive && _vfs_isDir(normalized)) return
+    throw Object.assign(new Error(`EEXIST: file already exists, mkdir '${path}'`), { code: "EEXIST" })
+  }
+  const parent = normalized.slice(0, normalized.lastIndexOf("/")) || "/"
+  if (!_vfs_isDir(parent)) {
+    if (!opts?.recursive) throw enoent("mkdir", parent)
+    mkdirSync(parent, opts)
+  }
+  _vfs_addDir(normalized)
+}
+
+export function readdirSync(path: string, opts?: any): any[] {
+  const entries = _vfs_readdir(path)
+  return entries.map((entry: BrowserWorkspaceDirent) => (opts?.withFileTypes ? entry : entry.name))
+}
+
+export function statSync(path: string, opts?: any): any {
+  // Delegate to the bridge-aware stat so mtimes are real and stable —
+  // FileTime.assert compares stat mtimes between read and write, so
+  // fabricating fresh timestamps here made every overwrite fail.
+  const stats = _vfs_stat(normalizePath(path))
+  if (!stats) {
+    if (opts?.throwIfNoEntry === false) return undefined
+    throw enoent("stat", path)
+  }
+  return stats
+}
+
+export const lstatSync = statSync
+
+export function realpathSync(path: string): string {
+  return normalizePath(path)
+}
+
+realpathSync.native = realpathSync
+
+export function accessSync(path: string): void {
+  if (!_vfs_exists(path)) {
+    throw enoent("access", path)
+  }
+}
+
+export function unlinkSync(path: string): void {
+  _vfs_remove(path)
+}
+
+export function rmSync(path: string, opts?: { recursive?: boolean; force?: boolean }): void {
+  if (!opts?.force && !_vfs_exists(path)) {
+    throw enoent("rm", path)
+  }
+
+  if (_vfs_isDir(path) && !opts?.recursive && _vfs_readdir(path).length)
+    throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rm '${path}'`), { code: "ENOTEMPTY" })
+  _vfs_remove(path, { recursive: Boolean(opts?.recursive) })
+}
+
+export function rmdirSync(path: string): void {
+  if (!_vfs_isDir(path)) throw enoent("rmdir", path)
+  if (_vfs_readdir(path).length)
+    throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rmdir '${path}'`), { code: "ENOTEMPTY" })
+  _vfs_remove(path)
+}
+
+export function utimesSync(path: string, atime: string | number | Date, mtime: string | number | Date): void {
+  _vfs_setTimes(path, atime, mtime)
+}
+
+export function chmodSync(): void {}
+export function chownSync(): void {}
+export function renameSync(oldPath: string, newPath: string): void {
+  const content = _vfs_getFile(oldPath)
+  if (content === undefined) {
+    throw enoent("rename", oldPath)
+  }
+  _vfs_setFile(newPath, content)
+  _vfs_remove(oldPath)
+}
+
+export const constants = {
+  F_OK: 0,
+  R_OK: 4,
+  W_OK: 2,
+  X_OK: 1,
+}
+
+export function createReadStream(path: string) {
+  const content = readFileSync(path, "utf8")
+  return Readable.from(String(content))
+}
+
+export function createWriteStream(path: string) {
+  const chunks: Buffer[] = []
+  return new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      callback()
+    },
+    final(callback) {
+      writeFileSync(path, Buffer.concat(chunks))
+      callback()
+    },
+  })
+}
+
+// Re-export promises API
+export { promises }
+
+type Callback<T = undefined> = (error: unknown, result?: T) => void
+function complete<T>(fn: () => T, callback: Callback<T>) {
+  queueMicrotask(() => {
+    let result: T
+    try {
+      result = fn()
+    } catch (error) {
+      callback(error)
+      return
+    }
+    callback(null, result)
+  })
+}
+export function readFile(
+  path: string,
+  options: string | Callback<string | Buffer>,
+  callback?: Callback<string | Buffer>,
+) {
+  complete(
+    () => readFileSync(path, typeof options === "string" ? options : undefined),
+    typeof options === "function" ? options : callback!,
+  )
+}
+export function writeFile(path: string, data: string | Uint8Array, options: unknown, callback?: Callback<void>) {
+  complete(() => writeFileSync(path, data), typeof options === "function" ? (options as Callback<void>) : callback!)
+}
+export function mkdir(path: string, options: { recursive?: boolean } | Callback<void>, callback?: Callback<void>) {
+  complete(
+    () => mkdirSync(path, typeof options === "function" ? undefined : options),
+    typeof options === "function" ? options : callback!,
+  )
+}
+export const stat = (path: string, callback: Callback<ReturnType<typeof statSync>>) =>
+  complete(() => statSync(path), callback)
+export const lstat = stat
+export const rmdir = (path: string, callback: Callback<void>) => complete(() => rmdirSync(path), callback)
+export const unlink = (path: string, callback: Callback<void>) => complete(() => unlinkSync(path), callback)
+export const realpath = Object.assign(
+  (path: string, callback: Callback<string>) => complete(() => realpathSync(path), callback),
+  {
+    native: (path: string, callback: Callback<string>) => complete(() => realpathSync(path), callback),
+  },
+)
+export const utimes = (
+  path: string,
+  atime: string | number | Date,
+  mtime: string | number | Date,
+  callback: Callback<void>,
+) => complete(() => utimesSync(path, atime, mtime), callback)
+
+export default {
+  readFileSync,
+  writeFileSync,
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  lstatSync,
+  realpathSync,
+  accessSync,
+  unlinkSync,
+  rmSync,
+  rmdirSync,
+  utimesSync,
+  chmodSync,
+  chownSync,
+  renameSync,
+  constants,
+  createReadStream,
+  createWriteStream,
+  promises,
+  readFile,
+  writeFile,
+  mkdir,
+  stat,
+  lstat,
+  rmdir,
+  unlink,
+  realpath,
+  utimes,
+}
