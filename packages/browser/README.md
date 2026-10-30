@@ -36,6 +36,7 @@ Each build fetches the real catalog from `https://models.opencode.ai/api.json` a
   style="width:100%;height:640px;border:0"
   allow="clipboard-read; clipboard-write"
 ></iframe>
+<a href="https://blamy.github.io/opencode/" target="_blank" rel="noopener noreferrer">Open full demo to connect</a>
 ```
 
 The `embed` query hides the version header and keeps a compact Connection control. The renderer uses a single-threaded WASM runtime, so the frame does not require cross-origin isolation. A sandbox with only `allow-scripts` has an opaque origin and runs real SQLite in memory; a visible “Memory-only storage” notice explains that its sessions last until the frame closes. IndexedDB's `SecurityError` selects the same mode. Quota, corruption, and migration errors remain errors, and existing saved databases are preserved.

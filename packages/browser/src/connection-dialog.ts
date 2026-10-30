@@ -139,7 +139,7 @@ export function mountConnectionDialog() {
     close()
   })
   find("#proxy-use").addEventListener("click", () => {
-    if (window.location.origin === "null") {
+    if (window.origin === "null") {
       status.textContent = "This sandbox hides its origin. Open the full demo to use the proxy."
       return
     }
@@ -192,15 +192,16 @@ export function mountConnectionDialog() {
       })
       .catch(report)
   })
-  // An opaque iframe cannot send an allowed Origin to the public Worker. Keep an explicit way to open the real app.
-  if (window.location.origin === "null") {
+  // location.origin is the URL origin even in an opaque sandbox; window.origin is the actual security origin.
+  // A sandbox without popups must use the host preview’s link outside the frame to open the full app.
+  if (window.origin === "null") {
     find<HTMLButtonElement>("#proxy-use").disabled = true
-    const link = document.createElement("a")
-    link.href = "https://blamy.github.io/opencode/"
-    link.target = "_blank"
-    link.rel = "noopener noreferrer"
-    link.textContent = "Open full demo to connect"
-    find("#proxy-use").after(link)
+    signIn.disabled = true
+    const note = document.createElement("p")
+    note.className = "connection-detail"
+    note.textContent =
+      "This sandbox hides its origin and blocks sign-in popups. Use the preview toolbar’s Open demo link, or open https://blamy.github.io/opencode/ in a new tab, to connect."
+    find("#proxy-use").after(note)
   }
   open()
   return () => {
