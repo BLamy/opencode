@@ -1,31 +1,37 @@
-import { Bus } from "@/bus"
 import { Config } from "@/config/config"
-import { Flag } from "@/flag/flag"
+import { AppRuntime } from "@/effect/app-runtime"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { Installation } from "@/installation"
+import { InstallationVersion } from "@opencode-ai/core/installation/version"
 
+// Checking never installs anything. Updates only happen when the user runs `/update` or `opencode upgrade`.
+export function shouldNotify(input: {
+  autoupdate: boolean | "notify" | undefined
+  disabled: boolean
+  always: boolean
+  current: string
+  latest: string
+}) {
+  if (input.autoupdate === false || input.disabled) return false
+  if (input.always) return true
+  return Installation.isUpdate(input.current, input.latest)
+}
+
+// Returns undefined when checks are disabled or fail, so the TUI only suggests OpenCode 2 after a successful check.
 export async function upgrade() {
-  const config = await Config.global()
-  const method = await Installation.method()
-  const latest = await Installation.latest(method).catch(() => {})
-  if (!latest) return
-
-  if (Flag.OPENCODE_ALWAYS_NOTIFY_UPDATE) {
-    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest })
-    return
-  }
-
-  if (Installation.VERSION === latest) return
+  const config = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.getGlobal()))
   if (config.autoupdate === false || Flag.OPENCODE_DISABLE_AUTOUPDATE) return
-
-  const kind = Installation.getReleaseType(Installation.VERSION, latest)
-
-  if (config.autoupdate === "notify" || kind !== "patch") {
-    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest })
-    return
-  }
-
-  if (method === "unknown") return
-  await Installation.upgrade(method, latest)
-    .then(() => Bus.publish(Installation.Event.Updated, { version: latest }))
-    .catch(() => {})
+  const latest = await Installation.latest(await Installation.method()).catch(() => {})
+  if (!latest) return
+  if (
+    shouldNotify({
+      autoupdate: config.autoupdate,
+      disabled: Flag.OPENCODE_DISABLE_AUTOUPDATE,
+      always: Flag.OPENCODE_ALWAYS_NOTIFY_UPDATE,
+      current: InstallationVersion,
+      latest,
+    })
+  )
+    return { type: "available" as const, version: latest }
+  return { type: "major" as const }
 }
