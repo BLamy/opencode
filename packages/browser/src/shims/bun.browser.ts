@@ -1,3 +1,4 @@
+import "./disposable.browser"
 import { Buffer } from "buffer"
 import wrapAnsiNpm from "wrap-ansi"
 import measureStringWidth from "string-width"

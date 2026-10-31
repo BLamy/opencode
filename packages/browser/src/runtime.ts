@@ -1,3 +1,4 @@
+import "./shims/disposable.browser"
 import process from "process"
 import { browserFetch } from "./browser-fetch"
 import { loadBrowserRenderLib } from "@opentui/core/browser"

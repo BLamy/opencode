@@ -6,6 +6,7 @@ import solid from "babel-preset-solid"
 import typescript from "@babel/preset-typescript"
 import { defineConfig, type Plugin } from "vite"
 import { nodePolyfills } from "vite-plugin-node-polyfills"
+import { browserTarget } from "./script/compat"
 
 const root = path.resolve(__dirname, "../..")
 const opentui = path.resolve(
@@ -363,7 +364,7 @@ export default defineConfig(async () => {
       ],
     },
     build: {
-      target: "esnext",
+      target: browserTarget,
       outDir: "dist",
       sourcemap: true,
       chunkSizeWarningLimit: 1800,

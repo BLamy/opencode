@@ -1,3 +1,4 @@
+import "./shims/disposable.browser"
 import { loadBrowserRenderLib } from "@opentui/core/browser"
 
 // Install process/Buffer and the native WASM backend before evaluating app

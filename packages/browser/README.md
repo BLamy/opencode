@@ -24,6 +24,8 @@ bun run preview
 
 The build uses relative asset URLs, so the standalone page and public runtime module work at `/opencode/` on GitHub Pages and under other host paths. `BASE_PATH` can override the build base. The build includes the renderer WASM, tree-sitter worker, parser WASM, and syntax assets under `opentui/`; SQLite assets are fingerprinted by Vite.
 
+The browser build lowers modern syntax for Safari, including upstream's `await using` file locks, and installs missing disposal symbols before loading the TUI. On macOS, run `bun run check:safari` after building to parse every generated JavaScript file with Safari's JavaScriptCore. The Pages workflow runs this check on the built artifact before deploying it.
+
 Each build fetches the real catalog from `https://models.opencode.ai/api.json` and includes it through OpenCode's standard model snapshot option so initial provider discovery also works offline. `build-info.json` records the catalog ETag and retrieval time alongside the exact release and runtime commits.
 
 ## Embed the actual TUI

@@ -68,9 +68,28 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: packages/browser/dist
+  safari:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: pages-artifact
+      - name: Extract built browser application
+        run: |
+          mkdir -p packages/browser/dist
+          tar -xf pages-artifact/artifact.tar -C packages/browser/dist
+      - name: Check every generated module in Safari's JavaScriptCore
+        working-directory: packages/browser
+        run: bun run check:safari
   deploy:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: [build, safari]
     runs-on: ubuntu-latest
     permissions:
       pages: write
