@@ -367,7 +367,13 @@ function unsupportedTemplateTag(): never {
   throw new Error("Bun.$ is unavailable in browser mode")
 }
 
+function sleep(milliseconds: number | Date): Promise<void> {
+  const delay = milliseconds instanceof Date ? Math.max(0, milliseconds.getTime() - Date.now()) : milliseconds
+  return new Promise((resolve) => setTimeout(resolve, delay))
+}
+
 const BunShim = {
+  sleep,
   file,
   write,
   fileURLToPath,
@@ -428,7 +434,7 @@ export const listen = unsupportedListen
 export const spawn = unsupportedSpawn
 export const generateHeapSnapshot = unsupportedGenerateHeapSnapshot
 export const embeddedFiles = BunShim.embeddedFiles
-export { JSONL, YAML, gc, hash, semver, stringWidth, stripANSI, wrapAnsi }
+export { JSONL, YAML, gc, hash, semver, sleep, stringWidth, stripANSI, wrapAnsi }
 export const $ = unsupportedTemplateTag
 export const version = BunShim.version
 

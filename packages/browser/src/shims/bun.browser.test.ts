@@ -43,3 +43,14 @@ test("importing the browser shim preserves a host's existing native Bun file ope
   expect(globalThis.Bun.version).not.toBe("browser")
   expect(BunBrowser.file).toBe(file)
 })
+
+test("browser Bun sleep supports the migration overlay without blocking the render", async () => {
+  let completed = false
+  const pending = BunBrowser.sleep(0).then(() => {
+    completed = true
+  })
+  expect(completed).toBe(false)
+  await pending
+  expect(completed).toBe(true)
+  await BunBrowser.sleep(new Date(0))
+})
