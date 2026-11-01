@@ -13,6 +13,8 @@ import { initBrowserDB } from "./shims/db.browser"
 import { NodeChildProcessSpawner, NodeFileSystem } from "./shims/effect-platform-node.browser"
 import { BrowserSqlite } from "./sqlite"
 import { fetch } from "./provider-network"
+import { Mcp } from "@opencode/core/mcp/index"
+import { hostMcpNode, type BrowserMcpServer } from "./host-mcp"
 
 export const browserPaths = {
   home: "/home/browser",
@@ -27,6 +29,7 @@ export const browserPaths = {
 }
 
 export interface BrowserBackendOptions {
+  readonly mcpServers?: ReadonlyArray<BrowserMcpServer>
   readonly database?: BrowserSqlite.Database
   readonly filesystem?: Layer.Layer<FileSystem.FileSystem>
   readonly path?: Layer.Layer<Path.Path>
@@ -50,6 +53,7 @@ export async function createBrowserBackend(options: BrowserBackendOptions = {}) 
     CrossSpawnSpawner.node.replace(options.spawner ?? NodeChildProcessSpawner.layer),
     RipgrepBinary.node.replace(Layer.succeed(RipgrepBinary.Service, { filepath: Effect.succeed("rg") })),
     ConfigPluginSource.node.replace(ConfigPluginSource.empty),
+    ...(options.mcpServers?.length ? [Mcp.node.replace(hostMcpNode(options.mcpServers))] : []),
     ...(options.replacements ?? []),
   ]
   const logs = options.onLog

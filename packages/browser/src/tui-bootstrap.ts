@@ -22,6 +22,7 @@ import {
   type BrowserWorkspaceBridge,
 } from "./shims/fs.browser"
 import { registerProcessBridgeForRoot, unregisterProcessBridgeForRoot } from "./shims/child-process.browser"
+import type { BrowserMcpServer } from "./host-mcp"
 
 declare const OPENCODE_VERSION: string
 
@@ -42,6 +43,7 @@ export interface BrowserTuiEnvironment {
 }
 
 export interface MountOpenCodeTuiOptions {
+  mcpServers?: ReadonlyArray<BrowserMcpServer>
   container: HTMLElement
   workspaceBridge?: BrowserWorkspaceBridge
   processBridge?: BrowserProcessBridge
@@ -408,7 +410,7 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
       options.server ??
       (await withScopedBridges(options.workspaceBridge, options.processBridge, async () => {
         const { createBrowserBackend } = await import("./backend")
-        return { ...(await createBrowserBackend()), url: "http://opencode.internal" }
+        return { ...(await createBrowserBackend({ mcpServers: options.mcpServers })), url: "http://opencode.internal" }
       }))
     cleanups.push(() => {
       void Promise.resolve(backend.dispose?.()).catch(console.error)

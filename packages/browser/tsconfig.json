@@ -24,7 +24,8 @@
     "src/assets.d.ts",
     "src/provider-network.test.ts",
     "src/sqlite.test.ts",
-    "src/shims/*.browser.ts"
+    "src/shims/*.browser.ts",
+    "src/host-mcp.test.ts"
   ],
   "exclude": ["node_modules"]
 }

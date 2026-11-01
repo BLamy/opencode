@@ -1,3 +1,5 @@
+import type { Interface } from "@opencode/core/mcp/index"
+
 const status = document.querySelector<HTMLElement>("#status")!
 const results = document.querySelector<HTMLOListElement>("#results")!
 let passed = 0
@@ -51,8 +53,46 @@ async function run() {
   const { seedDemoProject } = await import("./seed-project")
   seedDemoProject()
   const { createBrowserBackend } = await import("./backend")
+  const { Mcp } = await import("@opencode/core/mcp/index")
+  const { Context, Effect, Layer } = await import("effect")
+  const { hostMcpNode } = await import("./host-mcp")
+  let mcp: Interface | undefined
+  const counter = document.createElement("button")
+  counter.textContent = "MCP counter: 0"
+  document.body.append(counter)
+  let clicks = 0
+  counter.onclick = () => {
+    counter.textContent = `MCP counter: ${++clicks}`
+  }
+  const host = hostMcpNode([
+    {
+      name: "agent-browser",
+      version: "1",
+      instructions: "Control only the test app.",
+      tools: [
+        {
+          name: "agent_browser_click",
+          description: "Click the test app button.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      callTool: async () => {
+        counter.click()
+        return { content: [{ type: "text", text: counter.textContent ?? "" }] }
+      },
+    },
+  ]).mapLayer((layer) =>
+    layer.pipe(
+      Layer.tap((context) =>
+        Effect.sync(() => {
+          mcp = Context.get(context, Mcp.Service)
+        }),
+      ),
+    ),
+  )
   const backend = await check("Upstream v2 server and WASM migrations", () =>
     createBrowserBackend({
+      replacements: [Mcp.node.replace(host)],
       onStage: (stage) => {
         status.textContent = stage
       },
@@ -94,6 +134,24 @@ async function run() {
     await check("Reads actual source bytes", async () => {
       const bytes = await api.file.read({ location, path: "src/index.ts" })
       if (!new TextDecoder().decode(bytes).includes("formatDate")) throw new Error("Wrong file contents")
+    })
+    await check("OpenCode discovers host Agent Browser tools through the MCP handshake", async () => {
+      if (!mcp) throw new Error("MCP location service was not started")
+      const tools = await Effect.runPromise(mcp.tools())
+      if (!tools.some((tool) => tool.server === "agent-browser" && tool.name === "agent_browser_click"))
+        throw new Error("Host MCP tool was not discovered")
+      const instructions = await Effect.runPromise(mcp.instructions())
+      if (!instructions.some((entry) => entry.instructions === "Control only the test app."))
+        throw new Error("Host MCP instructions missing")
+    })
+    await check("OpenCode's real MCP client calls the host and changes the app button", async () => {
+      if (!mcp) throw new Error("MCP location service was not started")
+      const reply = await Effect.runPromise(
+        mcp.callTool({ server: "agent-browser", name: "agent_browser_click", args: {} }),
+      )
+      if (reply.isError || counter.textContent !== "MCP counter: 1") throw new Error("MCP click did not reach the DOM")
+      if (!JSON.stringify(reply.content).includes("MCP counter: 1"))
+        throw new Error("MCP result did not return to OpenCode")
     })
     await check("Loads bundled current models without background CORS fetches", async () => {
       const models = await api.model.list({ location })
