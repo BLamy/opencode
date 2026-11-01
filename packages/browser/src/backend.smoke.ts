@@ -1,4 +1,5 @@
 import type { Interface } from "@opencode/core/mcp/index"
+import type { SessionContext } from "@opencode/core/session/context"
 
 const status = document.querySelector<HTMLElement>("#status")!
 const results = document.querySelector<HTMLOListElement>("#results")!
@@ -54,9 +55,11 @@ async function run() {
   seedDemoProject()
   const { createBrowserBackend } = await import("./backend")
   const { Mcp } = await import("@opencode/core/mcp/index")
+  const { SessionContext } = await import("@opencode/core/session/context")
   const { Context, Effect, Layer } = await import("effect")
   const { hostMcpNode } = await import("./host-mcp")
   let mcp: Interface | undefined
+  let sessionContext: SessionContext.Interface | undefined
   const counter = document.createElement("button")
   counter.textContent = "MCP counter: 0"
   document.body.append(counter)
@@ -92,7 +95,20 @@ async function run() {
   )
   const backend = await check("Upstream v2 server and WASM migrations", () =>
     createBrowserBackend({
-      replacements: [Mcp.node.replace(host)],
+      replacements: [
+        Mcp.node.replace(host),
+        SessionContext.node.replace(
+          SessionContext.node.mapLayer((layer) =>
+            layer.pipe(
+              Layer.tap((context) =>
+                Effect.sync(() => {
+                  sessionContext = Context.get(context, SessionContext.Service)
+                }),
+              ),
+            ),
+          ),
+        ),
+      ],
       onStage: (stage) => {
         status.textContent = stage
       },
@@ -167,6 +183,47 @@ async function run() {
       const session = await api.session.create({ location, title: "WASM v2 verification" })
       const restored = await api.session.get({ sessionID: session.id })
       if (restored.title !== "WASM v2 verification") throw new Error("Session was not stored")
+    })
+    await check("The agent's model context exposes host MCP tools through Code Mode", async () => {
+      if (!sessionContext) throw new Error("Session context service was not started")
+      const { CodeModeCatalog } = await import("@opencode/core/codemode/catalog")
+      const { SessionMessage } = await import("@opencode/core/session/message")
+      const { SessionSchema } = await import("@opencode/core/session/schema")
+      const session = await api.session.create({
+        location,
+        title: "Host MCP agent context verification",
+        permissions: [
+          { action: "execute", resource: "*", effect: "allow" },
+          { action: "agent-browser_agent_browser_click", resource: "*", effect: "allow" },
+        ],
+      })
+      const selection = await Effect.runPromise(sessionContext.select(SessionSchema.ID.make(session.id)))
+      if (!selection.tools.definitions.some((tool) => tool.name === "execute") || !selection.tools.codeModeCatalog)
+        throw new Error("The agent model context has no Code Mode tools")
+      const tools = CodeModeCatalog.summarize(selection.tools.codeModeCatalog, { budget: Infinity })
+      if (
+        !tools.namespaces
+          .flatMap((namespace) => namespace.entries)
+          .some((tool) => tool.path === "agent-browser.agent_browser_click")
+      )
+        throw new Error("Host MCP tool missing from the agent's model context")
+      const result = await Effect.runPromise(
+        selection.tools
+          .execute({
+            sessionID: selection.session.id,
+            agent: selection.agent.id,
+            messageID: SessionMessage.ID.make("msg_host_mcp_verification"),
+            call: {
+              type: "tool-call",
+              id: "call_host_mcp_verification",
+              name: "execute",
+              input: { code: 'return await tools["agent-browser"].agent_browser_click({})' },
+            },
+          })
+          .pipe(Effect.timeout("10 seconds")),
+      )
+      if (counter.textContent !== "MCP counter: 2" || !JSON.stringify(result).includes("MCP counter: 2"))
+        throw new Error("Agent Code Mode did not execute the host MCP tool")
     })
     await check("Submitting offline finishes with a connection error instead of retrying", async () => {
       const models = await api.model.list({ location })
