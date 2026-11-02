@@ -9,12 +9,11 @@ import type { BrowserConnectionStore } from "./connection-state"
 
 export type { BrowserCredentialStore } from "./credentials"
 export type { BrowserConnectionStore } from "./connection-state"
-export const capabilities = { credentialStore: 1, connectionStore: 1 } as const
+export const capabilities = { credentialStore: 1, connectionStore: 1, hostMcp: 1 } as const
 
 export type { BrowserWorkspaceBridge } from "./shims/fs.browser"
 export type { BrowserProcessBridge } from "./shims/child-process.browser"
 export type { BrowserMcpServer } from "./host-mcp"
-export const capabilities = { hostMcp: 1 } as const
 
 export interface MountOptions extends Omit<MountOpenCodeTuiOptions, "env"> {
   connectionContainer: HTMLElement
