@@ -2,9 +2,9 @@ name: Browser and GitHub Pages
 
 on:
   push:
-    branches: [dev]
+    branches: [main, dev]
   pull_request:
-    branches: [dev]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
@@ -88,7 +88,7 @@ jobs:
         working-directory: packages/browser
         run: bun run check:safari
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [build, safari]
     runs-on: ubuntu-latest
     permissions:

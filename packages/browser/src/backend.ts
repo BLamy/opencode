@@ -1,3 +1,5 @@
+import { Credential } from "@opencode/core/credential"
+import { browserCredentialNode, type BrowserCredentialStore } from "./credentials"
 import { Database } from "@opencode/core/database/database"
 import { ConfigPluginSource } from "@opencode/core/config/plugin/source"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
@@ -27,6 +29,7 @@ export const browserPaths = {
 }
 
 export interface BrowserBackendOptions {
+  readonly credentialStore?: BrowserCredentialStore
   readonly database?: BrowserSqlite.Database
   readonly filesystem?: Layer.Layer<FileSystem.FileSystem>
   readonly path?: Layer.Layer<Path.Path>
@@ -50,6 +53,7 @@ export async function createBrowserBackend(options: BrowserBackendOptions = {}) 
     CrossSpawnSpawner.node.replace(options.spawner ?? NodeChildProcessSpawner.layer),
     RipgrepBinary.node.replace(Layer.succeed(RipgrepBinary.Service, { filepath: Effect.succeed("rg") })),
     ConfigPluginSource.node.replace(ConfigPluginSource.empty),
+    ...(options.credentialStore ? [Credential.node.replace(browserCredentialNode(options.credentialStore))] : []),
     ...(options.replacements ?? []),
   ]
   const logs = options.onLog

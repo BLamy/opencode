@@ -34,6 +34,22 @@ export function createProviderFetch(options: {
           "Choose Tailscale or the Cloudflare CORS proxy using Connection before signing in or sending a message.",
         )
       }
+      // The browser's HTTP config enables the OpenAI catalog before login. Core permits explicitly enabled
+      // providers without a credential; fail here until the device exchange has actually saved one.
+      const openai =
+        (target.hostname === "api.openai.com" && target.pathname.startsWith("/v1/")) ||
+        (target.hostname === "chatgpt.com" && target.pathname.startsWith("/backend-api/codex"))
+      if (openai && !request.headers.get("authorization")?.trim())
+        return Response.json(
+          {
+            error: {
+              message:
+                "OpenAI sign-in has not finished in this tab. Use /connect → OpenAI and keep the authorization dialog open until OpenCode confirms the connection. The approval page alone does not finish the token exchange.",
+              type: "browser_authentication_error",
+            },
+          },
+          { status: 401 },
+        )
       if (connection.type === "proxy") {
         // Rebuild the request: never send browser cookies to the relay. Streaming responses and cancellation stay native.
         const response = await options.direct((options.proxy ?? CLOUDFLARE_PROXY) + encodeURIComponent(target.href), {

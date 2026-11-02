@@ -5,6 +5,11 @@ import { loadBrowserRenderLib } from "@opentui/core/browser"
 import xtermStyles from "@xterm/xterm/css/xterm.css?inline"
 import connectionStyles from "./styles/connection.css?inline"
 import type { MountOpenCodeTuiOptions, OpenCodeTuiSession } from "./tui-bootstrap"
+import type { BrowserConnectionStore } from "./connection-state"
+
+export type { BrowserCredentialStore } from "./credentials"
+export type { BrowserConnectionStore } from "./connection-state"
+export const capabilities = { credentialStore: 1, connectionStore: 1 } as const
 
 export type { BrowserWorkspaceBridge } from "./shims/fs.browser"
 export type { BrowserProcessBridge } from "./shims/child-process.browser"
@@ -12,6 +17,7 @@ export type { BrowserProcessBridge } from "./shims/child-process.browser"
 export interface MountOptions extends Omit<MountOpenCodeTuiOptions, "env"> {
   connectionContainer: HTMLElement
   themeMode?: "light" | "dark"
+  connectionStore?: BrowserConnectionStore
 }
 
 declare const OPENCODE_VERSION: string
@@ -23,6 +29,14 @@ let active = false
 
 /** Stable browser module for BL UI and other host runtimes. All assets are relative to this module. */
 export async function mount(options: MountOptions): Promise<OpenCodeTuiSession> {
+  if (options.credentialStore && options.server)
+    throw new Error("The encrypted credential bridge requires the embedded browser server.")
+  if (options.credentialStore && options.credentialStore.version !== 1)
+    throw new Error("Unsupported encrypted credential bridge version.")
+  if (options.connectionStore && options.server)
+    throw new Error("The encrypted connection bridge requires the embedded browser server.")
+  if (options.connectionStore && options.connectionStore.version !== 1)
+    throw new Error("Unsupported encrypted connection bridge version.")
   if (active) throw new Error("An OpenCode runtime is already active in this page. Stop it before starting another.")
   active = true
   // AlmostNode may install only { env, cwd }. OpenTUI needs the full browser
@@ -55,7 +69,12 @@ export async function mount(options: MountOptions): Promise<OpenCodeTuiSession> 
     })
     const { mountOpenCodeTui } = await import("./tui-bootstrap")
     const { mountConnectionDialog } = await import("./connection-dialog")
-    connection = mountConnectionDialog({ container: options.connectionContainer, autoOpen: false })
+    connection = mountConnectionDialog({
+      container: options.connectionContainer,
+      autoOpen: false,
+      keychain: Boolean(options.credentialStore),
+      connectionStore: options.connectionStore,
+    })
     session = await mountOpenCodeTui({ ...options, assetBaseUrl: base, env: { themeMode: options.themeMode } })
     return { ...session, dispose }
   } catch (error) {

@@ -74,7 +74,7 @@ test("the proxy receives the encoded provider target, authentication and origina
 
 test("proxy responses remain streamed instead of waiting for the whole reply", async () => {
   const response = await route({ type: "proxy" })("https://chatgpt.com/backend-api/codex/responses", {
-    headers: { "x-stream-test": "yes" },
+    headers: { "x-stream-test": "yes", authorization: "Bearer synthetic-test" },
   })
   const reader = response.body!.getReader()
   expect(new TextDecoder().decode((await reader.read()).value)).toBe("data: first\n\n")
@@ -86,7 +86,9 @@ test("proxy responses remain streamed instead of waiting for the whole reply", a
 test("a disconnected private connection never falls back to the proxy", async () => {
   const before = requests
   const client = createTailscale()
-  const response = await route({ type: "tailscale", client })("https://chatgpt.com/backend-api/codex/responses")
+  const response = await route({ type: "tailscale", client })("https://chatgpt.com/backend-api/codex/responses", {
+    headers: { authorization: "Bearer synthetic-test" },
+  })
   expect(response.status).toBe(403)
   expect((await response.json()).error.message).toContain("online exit node")
   expect(requests).toBe(before)
@@ -103,7 +105,7 @@ test("cancelled requests stop before sending credentials", async () => {
 
 test("an HTML relay rejection gives actionable connection guidance", async () => {
   const response = await route({ type: "proxy" })("https://chatgpt.com/backend-api/codex/responses", {
-    headers: { "x-block-test": "yes" },
+    headers: { "x-block-test": "yes", authorization: "Bearer synthetic-test" },
   })
   expect(response.status).toBe(403)
   expect(response.headers.get("content-type")).toInclude("application/json")
@@ -118,4 +120,25 @@ test("provider quota errors are preserved without changing connections", async (
   })
   expect(response.status).toBe(429)
   expect(await response.json()).toEqual({ error: { type: "quota_fixture", message: "Fixture quota reached" } })
+})
+
+for (const url of ["https://api.openai.com/v1/responses", "https://chatgpt.com/backend-api/codex/responses"])
+  test(`missing OpenAI auth is blocked locally before transport: ${new URL(url).hostname}`, async () => {
+    const before = requests
+    const response = await route({ type: "proxy" })(url, { method: "POST", body: "{}" })
+    expect(response.status).toBe(401)
+    const body = await response.json()
+    expect(body.error.type).toBe("browser_authentication_error")
+    expect(body.error.message).toContain("keep the authorization dialog open")
+    expect(requests).toBe(before)
+  })
+
+test("device-code exchange requests do not need a model bearer header", async () => {
+  const before = requests
+  const response = await route({ type: "proxy" })("https://auth.openai.com/api/accounts/deviceauth/token", {
+    method: "POST",
+    body: "synthetic-device-only",
+  })
+  expect(response.status).toBe(200)
+  expect(requests).toBe(before + 1)
 })

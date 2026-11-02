@@ -1,6 +1,7 @@
 import "@xterm/xterm/css/xterm.css"
 import "./shims/bun.browser"
 
+import type { BrowserCredentialStore } from "./credentials"
 import { FitAddon } from "@xterm/addon-fit"
 import { Terminal } from "@xterm/xterm"
 import {
@@ -43,6 +44,7 @@ export interface BrowserTuiEnvironment {
 
 export interface MountOpenCodeTuiOptions {
   container: HTMLElement
+  credentialStore?: BrowserCredentialStore
   workspaceBridge?: BrowserWorkspaceBridge
   processBridge?: BrowserProcessBridge
   wasmUrl?: string | URL
@@ -408,7 +410,10 @@ export async function mountOpenCodeTui(options: MountOpenCodeTuiOptions): Promis
       options.server ??
       (await withScopedBridges(options.workspaceBridge, options.processBridge, async () => {
         const { createBrowserBackend } = await import("./backend")
-        return { ...(await createBrowserBackend()), url: "http://opencode.internal" }
+        return {
+          ...(await createBrowserBackend({ credentialStore: options.credentialStore })),
+          url: "http://opencode.internal",
+        }
       }))
     cleanups.push(() => {
       void Promise.resolve(backend.dispose?.()).catch(console.error)

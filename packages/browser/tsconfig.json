@@ -23,6 +23,8 @@
     "src/embed.smoke.ts",
     "src/assets.d.ts",
     "src/provider-network.test.ts",
+    "src/credentials.test.ts",
+    "src/connection-state.test.ts",
     "src/sqlite.test.ts",
     "src/shims/*.browser.ts"
   ],
