@@ -13,6 +13,8 @@ export const capabilities = { credentialStore: 1, connectionStore: 1 } as const
 
 export type { BrowserWorkspaceBridge } from "./shims/fs.browser"
 export type { BrowserProcessBridge } from "./shims/child-process.browser"
+export type { BrowserMcpServer } from "./host-mcp"
+export const capabilities = { hostMcp: 1 } as const
 
 export interface MountOptions extends Omit<MountOpenCodeTuiOptions, "env"> {
   connectionContainer: HTMLElement
@@ -37,6 +39,12 @@ export async function mount(options: MountOptions): Promise<OpenCodeTuiSession> 
     throw new Error("The encrypted connection bridge requires the embedded browser server.")
   if (options.connectionStore && options.connectionStore.version !== 1)
     throw new Error("Unsupported encrypted connection bridge version.")
+  if (options.mcpServers?.length && options.server)
+    throw new Error("Host MCP servers require the embedded browser backend.")
+  if (options.mcpServers?.some((server) => server.version !== "1"))
+    throw new Error("Unsupported host MCP bridge version.")
+  if (new Set(options.mcpServers?.map((server) => server.name)).size !== (options.mcpServers?.length ?? 0))
+    throw new Error("Host MCP server names must be unique.")
   if (active) throw new Error("An OpenCode runtime is already active in this page. Stop it before starting another.")
   active = true
   // AlmostNode may install only { env, cwd }. OpenTUI needs the full browser

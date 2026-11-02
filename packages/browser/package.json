@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "bun script/typecheck.ts",
     "check:safari": "bun script/check-safari.ts",
-    "test": "bun test script/compat.test.ts src/shims/fs.browser.test.ts src/browser-fetch.test.ts src/credentials.test.ts src/connection-state.test.ts src/provider-network.test.ts src/sqlite.test.ts src/shims/effect-platform-node.browser.test.ts src/shims/platform.browser.test.ts src/shims/bun.browser.test.ts",
+    "test": "bun test src/host-mcp.test.ts script/compat.test.ts src/shims/fs.browser.test.ts src/browser-fetch.test.ts src/credentials.test.ts src/connection-state.test.ts src/provider-network.test.ts src/sqlite.test.ts src/shims/effect-platform-node.browser.test.ts src/shims/platform.browser.test.ts src/shims/bun.browser.test.ts",
     "typecheck:tsc": "bun script/typecheck.ts"
   },
   "dependencies": {

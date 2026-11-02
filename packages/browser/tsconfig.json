@@ -26,7 +26,8 @@
     "src/credentials.test.ts",
     "src/connection-state.test.ts",
     "src/sqlite.test.ts",
-    "src/shims/*.browser.ts"
+    "src/shims/*.browser.ts",
+    "src/host-mcp.test.ts"
   ],
   "exclude": ["node_modules"]
 }
